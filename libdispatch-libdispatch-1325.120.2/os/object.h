@@ -215,6 +215,10 @@ OS_OBJECT_DECL_BASE(object, NSObject);
 #define OS_OBJECT_USE_OBJC_RETAIN_RELEASE 0
 #endif
 
+/*
+ OS_OBJECT_DECL_CLASS 宏
+ 会定义一个继承自 NSObject 协议的协议，协议的名称为固定的 name 添加 OS_ 前缀，并且定义一个表示遵循该协议的 NSObject 实例对象类型的指针的别名，名称为 name 添加后缀 _t。
+ */
 #if OS_OBJECT_SWIFT3
 #define OS_OBJECT_DECL_CLASS(name) \
 		OS_OBJECT_DECL_SUBCLASS_SWIFT(name, object)

@@ -2723,18 +2723,31 @@ _dispatch_queue_priority_inherit_from_target(dispatch_lane_class_t dq,
 	return tq;
 }
 
-
+/*
+ 参数:
+ tq = DISPATCH_TARGET_QUEUE_DEFAULT = NULL
+ legacy = true
+ 
+ dqa 如果是创建串行队列就是 null
+	 如果是创建并发队列就是 _dispatch_queue_attr_concurrent ->  dispatch_queue_attr_s
+ */
 DISPATCH_NOINLINE
 static dispatch_queue_t
-_dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
-		dispatch_queue_t tq, bool legacy)
+_dispatch_lane_create_with_target(const char *label,
+								  dispatch_queue_attr_t dqa,
+								  dispatch_queue_t tq,
+								  bool legacy)
 {
+	// dqai 创建
 	dispatch_queue_attr_info_t dqai = _dispatch_queue_attr_to_info(dqa);
 
 	//
 	// Step 1: Normalize arguments (qos, overcommit, tq)
+	// 第一步：规范化参数，例如qos, overcommit, tq
 	//
 
+	//优先级
+	{
 	dispatch_qos_t qos = dqai.dqai_qos;
 #if !HAVE_PTHREAD_WORKQUEUE_QOS
 	if (qos == DISPATCH_QOS_USER_INTERACTIVE) {
@@ -2744,15 +2757,19 @@ _dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
 		dqai.dqai_qos = qos = DISPATCH_QOS_BACKGROUND;
 	}
 #endif // !HAVE_PTHREAD_WORKQUEUE_QOS
+	}
 
 	_dispatch_queue_attr_overcommit_t overcommit = dqai.dqai_overcommit;
-	if (overcommit != _dispatch_queue_attr_overcommit_unspecified && tq) {
+	//判断异常 阅读时忽略
+ 	if (overcommit != _dispatch_queue_attr_overcommit_unspecified && tq) {
 		if (tq->do_targetq) {
 			DISPATCH_CLIENT_CRASH(tq, "Cannot specify both overcommit and "
 					"a non-global target queue");
 		}
 	}
 
+	//关于dq的判断和处理  串行队列时不用看 并发队列时要看
+	{
 	if (tq && dx_type(tq) == DISPATCH_QUEUE_GLOBAL_ROOT_TYPE) {
 		// Handle discrepancies between attr and target queue, attributes win
 		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
@@ -2766,28 +2783,42 @@ _dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
 			qos = _dispatch_priority_qos(tq->dq_priority);
 		}
 		tq = NULL;
-	} else if (tq && _dispatch_queue_is_cooperative(tq)) {
+	}
+	else if (tq && _dispatch_queue_is_cooperative(tq)) {
 		DISPATCH_CLIENT_CRASH(tq, "Cannot target object to cooperative root queue - not implemented");
-	} else if (tq && !tq->do_targetq) {
+	}
+	else if (tq && !tq->do_targetq) {
 		// target is a pthread or runloop root queue, setting QoS or overcommit
 		// is disallowed
 		if (overcommit != _dispatch_queue_attr_overcommit_unspecified) {
 			DISPATCH_CLIENT_CRASH(tq, "Cannot specify an overcommit attribute "
 					"and use this kind of target queue");
 		}
-	} else {
+	}
+	else {
 		if (overcommit == _dispatch_queue_attr_overcommit_unspecified) {
 			// Serial queues default to overcommit!
+			// 串行队列时  overcommit = _dispatch_queue_attr_overcommit_enabled
 			overcommit = dqai.dqai_concurrent ?
 					_dispatch_queue_attr_overcommit_disabled :
 					_dispatch_queue_attr_overcommit_enabled;
 		}
 	}
+	}
+	
+	//针对串行队列的处理 并发队列的处理在上面
 	if (!tq) {
+		// overcommit = _dispatch_queue_attr_overcommit_enabled = 1
+		// flags = DISPATCH_QUEUE_OVERCOMMIT = 0x2
 		uintptr_t flags = (overcommit == _dispatch_queue_attr_overcommit_enabled) ? DISPATCH_QUEUE_OVERCOMMIT : 0;
+		//从根队列获取
+		
+		// qos = 0, DISPATCH_QOS_UNSPECIFIED = 0
+		// DISPATCH_QOS_DEFAULT = 4 所以第一个参数为4
 		tq = _dispatch_get_root_queue(
-				qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos,
-					flags)->_as_dq;
+				qos == DISPATCH_QOS_UNSPECIFIED ? DISPATCH_QOS_DEFAULT : qos, // 4
+									  flags) // 2
+				->_as_dq;
 		if (unlikely(!tq)) {
 			DISPATCH_CLIENT_CRASH(qos, "Invalid queue attribute");
 		}
@@ -2795,6 +2826,8 @@ _dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
 
 	//
 	// Step 2: Initialize the queue
+	
+	// 第二步, 初始化队列
 	//
 
 	if (legacy) {
@@ -2827,8 +2860,22 @@ _dispatch_lane_create_with_target(const char *label, dispatch_queue_attr_t dqa,
 		}
 	}
 
+	//开辟内存 生成相应的对象 queue
 	dispatch_lane_t dq = _dispatch_object_alloc(vtable,
 			sizeof(struct dispatch_lane_s));
+	//初始化 dq
+	
+	/*   width
+	 
+	 #define DISPATCH_QUEUE_WIDTH_FULL			0x1000ull
+	 #define DISPATCH_QUEUE_WIDTH_POOL (DISPATCH_QUEUE_WIDTH_FULL - 1) 0xfff
+	 #define DISPATCH_QUEUE_WIDTH_MAX  (DISPATCH_QUEUE_WIDTH_FULL - 2) 0xffe
+	 
+	 并发队列 width = 0xffe
+	 串行队列 width = 1
+	 全局并发队列 width = 0xfff
+	 */
+	
 	_dispatch_queue_init(dq, dqf, dqai.dqai_concurrent ?
 			DISPATCH_QUEUE_WIDTH_MAX : 1, DISPATCH_QUEUE_ROLE_INNER |
 			(dqai.dqai_inactive ? DISPATCH_QUEUE_INACTIVE : 0));
@@ -8113,7 +8160,8 @@ dispatch_get_global_queue(intptr_t priority, uintptr_t flags)
 	if ((flags & DISPATCH_QUEUE_OVERCOMMIT) && (flags & DISPATCH_QUEUE_COOPERATIVE)) {
 		return DISPATCH_BAD_INPUT;
 	}
-
+	//priority = DISPATCH_QUEUE_PRIORITY_DEFAULT = 0,
+	//对应qos =  DISPATCH_QUEUE_PRIORITY_DEFAULT = 4
 	dispatch_qos_t qos = _dispatch_qos_from_queue_priority(priority);
 #if !HAVE_PTHREAD_WORKQUEUE_QOS
 	if (qos == QOS_CLASS_MAINTENANCE) {
@@ -8214,6 +8262,7 @@ libdispatch_init(void)
 #if TARGET_OS_MAC
 	_workgroup_init();
 #endif
+	
 	_dispatch_introspection_init();
 }
 

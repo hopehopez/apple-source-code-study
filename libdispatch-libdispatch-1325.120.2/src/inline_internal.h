@@ -2031,16 +2031,36 @@ DISPATCH_ALWAYS_INLINE DISPATCH_CONST
 static inline dispatch_queue_global_t
 _dispatch_get_root_queue(dispatch_qos_t qos, uintptr_t flags)
 {
+	//串行队列时 qos= 4, flags = 2
+	// DISPATCH_QOS_MAINTENANCE = 1
+	// DISPATCH_QOS_USER_INTERACTIVE = 6
 	if (unlikely(qos < DISPATCH_QOS_MIN || qos > DISPATCH_QOS_MAX)) {
 		DISPATCH_CLIENT_CRASH(qos, "Corrupted priority");
 	}
+	
+
+	/* add_on
+	 DISPATCH_QUEUE_OVERCOMMIT = 2
+	 
+	 #define DISPATCH_ROOT_QUEUE_IDX_OFFSET_OVERCOMMIT \
+		 (DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS_OVERCOMMIT - DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS)
+	 DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS_OVERCOMMIT = 1
+	 DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS = 0
+	 
+	 所以 获取串行队列是时  add_on = 1
+	
+	 
+	 获取全局并发队列时 flags = 0, 所以 add_on = 0
+	 默认的qos = 4, 所以下标应该是 9
+	 */
 	unsigned int add_on = 0;
 	if (flags & DISPATCH_QUEUE_OVERCOMMIT) {
 		add_on = DISPATCH_ROOT_QUEUE_IDX_OFFSET_OVERCOMMIT;
 	} else if (flags & DISPATCH_QUEUE_COOPERATIVE) {
 		add_on = DISPATCH_ROOT_QUEUE_IDX_OFFSET_COOPERATIVE;
 	}
-
+	
+    // 3 * (4-1) + 1 = 10
 	return &_dispatch_root_queues[3 * (qos - 1) + add_on];
 }
 

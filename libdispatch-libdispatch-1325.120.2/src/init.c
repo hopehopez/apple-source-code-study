@@ -482,6 +482,8 @@ _dispatch_queue_attr_to_info(dispatch_queue_attr_t dqa)
 {
 	dispatch_queue_attr_info_t dqai = { };
 
+	//如果dqa为空  也就是串行队列  就返回一个空的dqai
+	//如果不为空 就继续向下执行
 	if (!dqa) return dqai;
 
 #if DISPATCH_VARIANT_STATIC

@@ -52,6 +52,12 @@ DISPATCH_ASSUME_NONNULL_BEGIN
  * analyzer, and enables them to be added to Cocoa collections.
  * See <os/object.h> for details.
  */
+/*
+ * 默认情况下，使用 Objective-C 编译器进行构建时，dispatch objects 被声明为 Objective-C 类型（NSObject）。
+ * 这使他们可以参与 ARC，通过 Blocks 运行时参与 RR（retain/release）管理以及通过静态分析器参与泄漏检查，
+ * 并将它们添加到 Cocoa 集合（NSMutableArray、NSMutableDictionary...）中。
+   有关详细信息，请参见<os/object.h>。
+ */
 OS_OBJECT_DECL_CLASS(dispatch_object);
 
 #if OS_OBJECT_SWIFT3
@@ -59,6 +65,8 @@ OS_OBJECT_DECL_CLASS(dispatch_object);
 #define DISPATCH_DECL_SUBCLASS(name, base) OS_OBJECT_DECL_SUBCLASS_SWIFT(name, base)
 #else // OS_OBJECT_SWIFT3
 #define DISPATCH_DECL(name) OS_OBJECT_DECL_SUBCLASS(name, dispatch_object)
+
+///可在定义一个协议时，指定其所继承的协议，但是在使用时，要保证指定的 base 协议是已经定义过的
 #define DISPATCH_DECL_SUBCLASS(name, base) OS_OBJECT_DECL_SUBCLASS(name, base)
 
 DISPATCH_INLINE DISPATCH_ALWAYS_INLINE DISPATCH_NONNULL_ALL DISPATCH_NOTHROW
