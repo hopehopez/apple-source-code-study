@@ -134,6 +134,17 @@ typedef union {
 #endif
 
 #if OS_OBJECT_SWIFT3 && OS_OBJECT_USE_OBJC
+
+/*
+ 在 Swift（在 Swift 中使用 Objective-C）下宏定义DISPATCH_SOURCE_TYPE_DECL展开是:
+ extern struct dispatch_source_type_s _dispatch_source_type_data_add;
+ @protocol OS_dispatch_source_data_add <OS_dispatch_source>
+ @end
+
+ @interface OS_dispatch_source () <OS_dispatch_source_data_add>
+ @end
+*/
+
 #define DISPATCH_SOURCE_TYPE_DECL(name) \
 		DISPATCH_EXPORT struct dispatch_source_type_s \
 				_dispatch_source_type_##name; \
@@ -148,6 +159,10 @@ typedef union {
 #define DISPATCH_DATA_DECL(name) OS_OBJECT_DECL_SWIFT(name)
 #endif // DISPATCH_DATA_DECL
 #else
+/*
+ 在 Objective-C/C++/C 下宏定义DISPATCH_SOURCE_TYPE_DECL展开是:
+extern const struct dispatch_source_type_s _dispatch_source_type_data_add;
+*/
 #define DISPATCH_SOURCE_DECL(name) \
 		DISPATCH_DECL(name);
 #define DISPATCH_DATA_DECL(name) DISPATCH_DECL(name)
