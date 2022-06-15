@@ -577,7 +577,8 @@ typedef struct dispatch_workloop_attr_s {
 	__pointer_sized_field__
 #else
 #define _DISPATCH_QUEUE_CLASS_HEADER(x, __pointer_sized_field__) \
-	DISPATCH_OBJECT_HEADER(x); \
+	DISPATCH_OBJECT_HEADER(x); \// 来了， _DISPATCH_OBJECT_HEADER 宏来了，基类的内容来了，这里是 "_DISPATCH_OBJECT_HEADER(queue);"，等下直接展开。
+//DISPATCH_OBJECT_HEADER 这里用到了和前面dispatch_object_s 一样的宏定义,即等下 dispatch_queue_s 结构体展开其前面几个成员变量时是和 dispatch_object_s 如出一辙的，这样就模拟了继承机制，如可以理解为 dispatch_queue_s 前面的几个成员变量继承自 dispatch_object_s。
 	__pointer_sized_field__; \
 	DISPATCH_UNION_LE(uint64_t volatile dq_state, \
 			dispatch_lock dq_state_lock, \
@@ -588,13 +589,17 @@ typedef struct dispatch_workloop_attr_s {
 #define DISPATCH_QUEUE_CLASS_HEADER(x, __pointer_sized_field__) \
 	_DISPATCH_QUEUE_CLASS_HEADER(x, __pointer_sized_field__); \
 	/* LP64 global queue cacheline boundary */ \
+	/* 队列序号，如我们常见的主队列序列号是 1 */\
 	unsigned long dq_serialnum; \
+	/*队列标签，可以直接理解为队列名字，如我们创建自定义队列时的自定义字符串作为队列名字*/\
 	const char *dq_label; \
 	DISPATCH_UNION_LE(uint32_t volatile dq_atomic_flags, \
 		const uint16_t dq_width, \
 		const uint16_t __dq_opaque2 \
 	); \
+	/* 队列优先级*/ \
 	dispatch_priority_t dq_priority; \
+	/* 类似 dispatch_object_t 联合体，定义了一众指向不同的 GCD 相关结构体的指针*/ \
 	union { \
 		struct dispatch_queue_specific_head_s *dq_specific_head; \
 		struct dispatch_source_refs_s *ds_refs; \
@@ -603,7 +608,63 @@ typedef struct dispatch_workloop_attr_s {
 		struct dispatch_channel_callbacks_s const *dch_callbacks; \
 	}; \
 	int volatile dq_sref_cnt
+/*
+ 
+ struct dispatch_queue_s {
+	 struct dispatch_object_s _as_do[0]; // 长度为 0 的数组，可忽略，同时也在暗示着结构体内存空间中的数据类型
+	 struct _os_object_s _as_os_obj[0];
 
+	 const struct dispatch_queue_vtable_s *do_vtable;
+	 int volatile do_ref_cnt;
+	 int volatile do_xref_cnt;
+
+	 struct dispatch_queue_s *volatile do_next;
+	 struct dispatch_queue_s *do_targetq;
+	 void *do_ctxt;
+	 void *do_finalizer;
+	 
+
+	 // DISPATCH_OBJECT_HEADER(queue); 这里是分界，可以把以上内容理解为继承自 dispatch_object_s。
+	 
+	 void *__dq_opaque1;
+	 union {
+		 uint64_t volatile dq_state; // 队列状态
+		 struct {
+			 // typedef uint32_t dispatch_lock;
+			 // dispatch_lock 是 uint32_t 类型
+			 dispatch_lock dq_state_lock;
+			 uint32_t dq_state_bits;
+		 };
+	 };
+	 
+	 //LP64 global queue cacheline boundary
+	 
+	 unsigned long dq_serialnum; // 队列序列号，如主队列序号是 1
+	 const char *dq_label; // 队列标签或者队列名字
+	 union {
+		 uint32_t volatile dq_atomic_flags;
+		 struct {
+			 const uint16_t dq_width; // 队列的宽度（串行队列为 1，并发队列大于 1）
+			 const uint16_t __dq_opaque2;
+		 };
+	 };
+	 
+	 // typedef uint32_t dispatch_priority_t;
+	 // 在 priority.h 文件中，看到 dispatch_priority_t 是 uint32_t 类型
+	 
+	 dispatch_priority_t dq_priority; // 队列优先级
+	 union { // 联合体
+		 struct dispatch_queue_specific_head_s *dq_specific_head;
+		 struct dispatch_source_refs_s *ds_refs;
+		 struct dispatch_timer_source_refs_s *ds_timer_refs;
+		 struct dispatch_mach_recv_refs_s *dm_recv_refs;
+		 struct dispatch_channel_callbacks_s const *dch_callbacks;
+	 };
+	 int volatile dq_sref_cnt; //
+	 
+	 //* 32bit hole on LP64
+ } DISPATCH_ATOMIC64_ALIGN;
+ */
 struct dispatch_queue_s {
 	DISPATCH_QUEUE_CLASS_HEADER(queue, void *__dq_opaque1);
 	/* 32bit hole on LP64 */
@@ -927,19 +988,54 @@ extern struct dispatch_queue_global_s _dispatch_root_queues[]; // serials 4 - 21
 #pragma mark dispatch_queue_attr_t
 
 DISPATCH_CLASS_DECL(queue_attr, OBJECT);
+/* 展开如下
+ struct dispatch_queue_attr_s;
+ struct dispatch_queue_attr_extra_vtable_s {
+	 unsigned long const do_type;
+	 const char *const do_kind;
+	 void (*const do_dispose)(struct dispatch_queue_attr_s *, bool *allow_free);
+	 size_t (*const do_debug)(struct dispatch_queue_attr_s *, char *, size_t);
+	 void (*const do_invoke)(struct dispatch_queue_attr_s *, dispatch_invoke_context_t, dispatch_invoke_flags_t)
+ };
+
+ struct dispatch_queue_attr_vtable_s {
+	 void (*_os_obj_xref_dispose)(_os_object_t);
+	 void (*_os_obj_dispose)(_os_object_t);
+			 
+	 struct dispatch_queue_attr_extra_vtable_s _os_obj_vtable;
+ };
+		 
+ extern const struct dispatch_queue_attr_vtable_s _OS_dispatch_queue_attr_vtable;
+ extern const struct dispatch_queue_attr_vtable_s _dispatch_queue_attr_vtable __asm__(".objc_class_name_" OS_STRINGIFY(OS_dispatch_queue_attr))
+ */
+
+
+///结构体用来表示队列的属性，包含了队列里面的一些操作函数，可以表明这个队列是串行队列还是并发队列等信息
+///
+///struct dispatch_queue_attr_s {
+///    const struct dispatch_queue_attr_vtable_s *do_vtable;
+///    int volatile do_ref_cnt;
+///    int volatile do_xref_cnt;
+///};
+///
+///展开后, 只有 “继承” 自 _os_object_s 的三个成员变量
+///
 struct dispatch_queue_attr_s {
 	OS_OBJECT_STRUCT_HEADER(dispatch_queue_attr);
 };
 
+///实际描述队列的属性的结构体其实是 dispatch_queue_attr_info_s
+///dispatch_queue_attr_info_s 内部使用了位域来表示不同的值，来节省内存占用。
 typedef struct dispatch_queue_attr_info_s {
-	dispatch_qos_t dqai_qos : 8;
-	int      dqai_relpri : 8;
-	uint16_t dqai_overcommit:2;
-	uint16_t dqai_autorelease_frequency:2;
-	uint16_t dqai_concurrent:1;
-	uint16_t dqai_inactive:1;
+	dispatch_qos_t dqai_qos : 8; //（表示线程优先级）
+	int      dqai_relpri : 8; //（表示优先级的偏移）
+	uint16_t dqai_overcommit:2;// 是否可以 overcommit（过的量是 CPU 的物理核心数）
+	uint16_t dqai_autorelease_frequency:2;// （自动释放频率）
+	uint16_t dqai_concurrent:1;// 表示队列是并发队列还是串行队列
+	uint16_t dqai_inactive:1;// 表示当前队列是否是活动状态（是否激活）
 } dispatch_queue_attr_info_t;
 
+///指定队列 overcommit 状态的枚举。
 typedef enum {
 	_dispatch_queue_attr_overcommit_unspecified = 0,
 	_dispatch_queue_attr_overcommit_enabled,
@@ -958,6 +1054,7 @@ typedef enum {
 
 #define DISPATCH_QUEUE_ATTR_INACTIVE_COUNT 2
 
+//值是不同属性的值的乘积。DISPATCH_QUEUE_ATTR_COUNT = (3 * 3 * 6 * 16 * 2 * 2) = 3456
 #define DISPATCH_QUEUE_ATTR_COUNT  ( \
 		DISPATCH_QUEUE_ATTR_OVERCOMMIT_COUNT * \
 		DISPATCH_QUEUE_ATTR_AUTORELEASE_FREQUENCY_COUNT * \
@@ -966,13 +1063,17 @@ typedef enum {
 		DISPATCH_QUEUE_ATTR_CONCURRENCY_COUNT * \
 		DISPATCH_QUEUE_ATTR_INACTIVE_COUNT )
 
+//全局变量 _dispatch_queue_attrs，一个长度是 3456 的 dispatch_queue_attr_s 数组
 extern const struct dispatch_queue_attr_s
 _dispatch_queue_attrs[DISPATCH_QUEUE_ATTR_COUNT];
 
+//_dispatch_queue_attr_to_info 函数实现从一个 dispatch_queue_attr_t 入参得到一个 dispatch_queue_attr_info_t 的返回值。
 dispatch_queue_attr_info_t _dispatch_queue_attr_to_info(dispatch_queue_attr_t);
 
 #pragma mark -
 #pragma mark dispatch_continuation_t
+
+// continuation 继续  [kənˌtɪnjuˈeɪʃn]
 
 // If dc_flags is less than 0x1000, then the object is a continuation.
 // Otherwise, the object has a private layout and memory management rules. The
@@ -1068,6 +1169,31 @@ dispatch_queue_attr_info_t _dispatch_queue_attr_to_info(dispatch_queue_attr_t);
 // The item is a channel item, not a continuation
 #define DC_FLAG_CHANNEL_ITEM			0x400ul
 
+//当我们向队列提交任务时，无论 block 还是 function 形式，最终都会被封装为 dispatch_continuation_s，所以可以把它理解为描述任务内容的结构体。
+/*
+ typedef struct dispatch_continuation_s {
+	 union {
+		 const void *do_vtable;
+		 uintptr_t dc_flags;
+	 };
+	 
+	 union {
+		 pthread_priority_t dc_priority;
+		 int dc_cache_cnt;
+		 uintptr_t dc_pad;
+	 };
+	 
+	 struct dispatch_continuation_s *volatile do_next; // 下一个任务
+	 struct voucher_s *dc_voucher;
+	 
+	 // typedef void (*dispatch_function_t)(void *_Nullable);
+	 
+	 dispatch_function_t dc_func; // 要执行的函数指针
+	 void *dc_ctxt; // 方法的上下文
+	 void *dc_data; // 相关数据
+	 void *dc_other; // 其它信息
+ } *dispatch_continuation_t;
+ */
 typedef struct dispatch_continuation_s {
 	DISPATCH_CONTINUATION_HEADER(continuation);
 } *dispatch_continuation_t;

@@ -182,20 +182,20 @@ typedef union {
 
 #ifndef __OBJC__
 typedef union {
-	struct _os_object_s *_os_obj;
-	struct dispatch_object_s *_do;
-	struct dispatch_queue_s *_dq;
-	struct dispatch_queue_attr_s *_dqa;
-	struct dispatch_group_s *_dg;
-	struct dispatch_source_s *_ds;
+	struct _os_object_s *_os_obj;// GCD 的基基类
+	struct dispatch_object_s *_do;// GCD 的基类，
+	struct dispatch_queue_s *_dq;// 队列（我们创建的队列都是这个类型，不管是串行队列还是并行队列）
+	struct dispatch_queue_attr_s *_dqa;// 队列的属性，包含了队列里面的一些操作函数，可以表明这个队列是串行队列还是并发队列等等信息
+	struct dispatch_group_s *_dg; // GCD 的 group
+	struct dispatch_source_s *_ds;// GCD 的 source，可以监测内核事件，文件读写事件和 socket 通信事件
 	struct dispatch_channel_s *_dch;
 	struct dispatch_mach_s *_dm;
 	struct dispatch_mach_msg_s *_dmsg;
-	struct dispatch_semaphore_s *_dsema;
+	struct dispatch_semaphore_s *_dsema;// 信号量, 信号量可以用来调度线程
 	struct dispatch_data_s *_ddata;
 	struct dispatch_io_s *_dchannel;
 
-	struct dispatch_continuation_s *_dc;
+	struct dispatch_continuation_s *_dc; // 任务，（任务的 block 和 函数都会封装成这个数据结构）
 	struct dispatch_swift_continuation_s *_dsjc;
 	struct dispatch_sync_context_s *_dsc;
 	struct dispatch_operation_s *_doperation;
@@ -209,6 +209,7 @@ typedef union {
 	dispatch_lane_class_t _dlu;
 	uintptr_t _do_value;
 } dispatch_object_t DISPATCH_TRANSPARENT_UNION;
+// dispatch_object_t 结尾处的 DISPATCH_TRANSPARENT_UNION 表示它是一个透明联合体，即 dispatch_object_t 可以表示为指向联合体内部的任何一种类型的指针。
 
 DISPATCH_ALWAYS_INLINE
 static inline dispatch_object_t
@@ -417,13 +418,16 @@ DISPATCH_EXPORT DISPATCH_NOTHROW void dispatch_atfork_child(void);
 #define DISPATCH_ALWAYS_INLINE_NDEBUG
 #endif	/* __GNUC__ */
 
+// DISPATCH_CONCAT 宏较简单，只是把宏中的两个参数拼接在一起。
 #define DISPATCH_CONCAT(x,y) DISPATCH_CONCAT1(x,y)
 #define DISPATCH_CONCAT1(x,y) x ## y
 
+//DISPATCH_COUNT_ARGS 统计宏定义中的参数个数，例如：DISPATCH_COUNT_ARGS 中有两个参数时宏转换得到 _2，有三个参数时宏转换得到 _3。
 #define DISPATCH_COUNT_ARGS(...) DISPATCH_COUNT_ARGS1(, ## __VA_ARGS__, \
 		_8, _7, _6, _5, _4, _3, _2, _1, _0)
 #define DISPATCH_COUNT_ARGS1(z, a, b, c, d, e, f, g, h, cnt, ...) cnt
 
+//DISPATCH_STRUCT_LE_2 宏也较简单，只是把宏中的参数构建为一个结构体。
 #if BYTE_ORDER == LITTLE_ENDIAN
 #define DISPATCH_STRUCT_LE_2(a, b)        struct { a; b; }
 #define DISPATCH_STRUCT_LE_3(a, b, c)     struct { a; b; c; }
@@ -433,12 +437,32 @@ DISPATCH_EXPORT DISPATCH_NOTHROW void dispatch_atfork_child(void);
 #define DISPATCH_STRUCT_LE_3(a, b, c)     struct { c; b; a; }
 #define DISPATCH_STRUCT_LE_4(a, b, c, d)  struct { d; c; b; a; }
 #endif
+
+//DISPATCH_UNION_ASSERT 是一个断言联合体，断言的内容是判断仅有一个成员变量 alias 的结构体的内存空间长度是否等于 st 的内存空间长度。
 #if __has_feature(c_startic_assert)
 #define DISPATCH_UNION_ASSERT(alias, st) \
 		_Static_assert(sizeof(struct { alias; }) == sizeof(st), "bogus union");
 #else
 #define DISPATCH_UNION_ASSERT(alias, st)
 #endif
+
+/* DISPATCH_UNION_LE 展开
+ 
+ DISPATCH_UNION_ASSERT(uint64_t volatile dq_state,
+					   struct {
+						   dispatch_lock dq_state_lock;
+						   uint32_t dq_state_bits;
+					   };) // 这一行展开是断言判断
+
+ union { // 这一行展开是一个联合体定义，而恰恰断言判断的正是联合体内部的两部分内存空间长度是否相等
+	 uint64_t volatile dq_state;
+	 struct {
+		 dispatch_lock dq_state_lock;
+		 uint32_t dq_state_bits;
+	 };
+ };
+
+ */
 #define DISPATCH_UNION_LE(alias, ...) \
 		DISPATCH_UNION_ASSERT(alias, DISPATCH_CONCAT(DISPATCH_STRUCT_LE, \
 				DISPATCH_COUNT_ARGS(__VA_ARGS__))(__VA_ARGS__)) \

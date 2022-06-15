@@ -480,19 +480,23 @@ extern struct dispatch_queue_attr_s _dispatch_queue_attr_concurrent
 dispatch_queue_attr_info_t
 _dispatch_queue_attr_to_info(dispatch_queue_attr_t dqa)
 {
+	// 创建一个 dispatch_queue_attr_info_t 结构体的局部变量 dqai
 	dispatch_queue_attr_info_t dqai = { };
 
-	//如果dqa为空  也就是串行队列  就返回一个空的dqai
-	//如果不为空 就继续向下执行
+	// 如果 dqa 不存在则直接返回一个空的 dispatch_queue_attr_info_t 结构体实例
+	// dqa为空时, 创建的是串行队列
 	if (!dqa) return dqai;
 
 #if DISPATCH_VARIANT_STATIC
+	// _dispatch_queue_attr_concurrent 是一个全局变量，表示并发队列属性
 	if (dqa == &_dispatch_queue_attr_concurrent) {
+		// 如果相等，则把 dqai 的 dqai_concurrent 成员变量置为 true，表示是一个并发队列属性
 		dqai.dqai_concurrent = true;
 		return dqai;
 	}
 #endif
-
+	
+	// 这里是一个内存范围的判断，如果 dqa 的内存空间在 _dispatch_queue_attrs 数组之外，则直接 crash
 	if (dqa < _dispatch_queue_attrs ||
 			dqa >= &_dispatch_queue_attrs[DISPATCH_QUEUE_ATTR_COUNT]) {
 #ifndef __APPLE__
@@ -504,7 +508,14 @@ _dispatch_queue_attr_to_info(dispatch_queue_attr_t dqa)
 		DISPATCH_CLIENT_CRASH(dqa->do_vtable, "Invalid queue attribute");
 	}
 
+	// idx 表示 dqa 在 _dispatch_queue_attrs 数组中的索引
 	size_t idx = (size_t)(dqa - _dispatch_queue_attrs);
+	
+	// 下面是依次取模设置为 dqai 的各个成员变量的值，然后更新 idx 为商，
+	// 在 dispatch_queue_attr_info_s 结构体中它的每个成员变量是以位域的形式保存的，
+	// 所以这里以每个成员变量的占位长度来取模，即取得该成员变量的值。
+		
+	// 类似我们以前常见的分别求一个数字的个位十位百位等等位的数字，只不过它们是每个数字都占 1 位，而这里则是不同的成员值占不同的位数
 
 	dqai.dqai_inactive = (idx % DISPATCH_QUEUE_ATTR_INACTIVE_COUNT);
 	idx /= DISPATCH_QUEUE_ATTR_INACTIVE_COUNT;

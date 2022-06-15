@@ -96,6 +96,7 @@
 #else
 #define OS_OBJECT_HAVE_OBJC1 0
 #define OS_OBJECT_HAVE_OBJC2 0
+//// 两个销毁函数的指针（_os_object_t 是指向 _os_object_s 结构体的指针）
 #define _OS_OBJECT_CLASS_HEADER() \
 		void (*_os_obj_xref_dispose)(_os_object_t); \
 		void (*_os_obj_dispose)(_os_object_t)

@@ -455,6 +455,16 @@ typedef struct _os_object_vtable_s {
 	_OS_OBJECT_CLASS_HEADER();
 } _os_object_vtable_s;
 
+//_os_object_s 作为 GCD 的基类存在的, 它正是 dispatch_object_s 结构体的“父类”
+// 把 _OS_OBJECT_HEADER 宏展开则是:
+//typedef struct _os_object_s {
+//	const _os_object_vtable_s *os_obj_isa; // 这个 _vtable_ 联想到了 C++ 中的虚函数表...
+//	int volatile os_obj_ref_cnt; // 引用计数
+//	int volatile os_obj_xref_cnt; // 外部引用计数
+//} _os_object_s;
+
+
+
 typedef struct _os_object_s {
 	_OS_OBJECT_HEADER(
 	const _os_object_vtable_s *__ptrauth_objc_isa_pointer os_obj_isa,
@@ -477,6 +487,14 @@ typedef struct _os_object_s {
 	do_xref_cnt)
 #endif
 
+/*
+ _as_os_obj[0] 是一个长度为 0 的数组，不占用任何内存，同时它也预示了 dispatch_object_s 的 “父类” 是 _os_object_s
+ 
+ OS_OBJECT_STRUCT_HEADER(dispatch_##x); 展开就是把“父类”-_os_object_s 的成员变量平铺展开放在“子类” dispatch_object_s 的头部位置
+ 
+ struct dispatch_##x##_s *volatile do_next; 则是“子类”自己的成员变量
+ 
+ */
 #define _DISPATCH_OBJECT_HEADER_INTERNAL(x) \
 	struct _os_object_s _as_os_obj[0]; \
 	OS_OBJECT_STRUCT_HEADER(dispatch_##x); \
@@ -509,9 +527,61 @@ typedef struct _os_object_s {
 _OS_OBJECT_DECL_PROTOCOL(dispatch_object, object);
 DISPATCH_CLASS_DECL_BARE(object, OBJECT);
 
+//dispatch_object_s 是 GCD 的基础结构体，它是继承自 _os_object_s 结构体的
+/*
+ struct dispatch_object_s {
+	 struct _os_object_s _as_os_obj[0]; // 长度为 0 的数组
+	 
+	 // _os_object_s 是仅包含下面三个成员变量的结构体，同时它也是 GCD 中所有“类”的基类，大概可以理解为 OC 中的 NSObject
+	 // const _os_object_vtable_s *os_obj_isa;
+	 // int volatile os_obj_ref_cnt;
+	 // int volatile os_obj_xref_cnt;
+	 
+	 const struct dispatch_object_vtable_s *do_vtable; // must be pointer-size // do_vtable 包含了对象类型和 dispatch_object_s 的操作函数
+	 int volatile do_ref_cnt; // 引用计数（do 应该是 Dispatch Object 的首字母，上面 _os_object_s 内使用的是 os_obj_ref_cnt）
+	 int volatile do_xref_cnt; // 外部引用计数
+	 
+	 struct dispatch_object_s *volatile do_next; // do_next 表示链表的 next，（下一个 dispatch_object_s）
+	 struct dispatch_queue_s *do_targetq; // 目标队列，（表示当前任务要在这个队列运行）
+	 void *do_ctxt; // 上下文，即运行任务（其实是一个函数）的参数
+	 void *do_finalizer; // 最终销毁时调用的函数
+ };
+*/
+
 struct dispatch_object_s {
 	_DISPATCH_OBJECT_HEADER(object);
 };
+/*
+ 下面这些结构体都有
+ 
+ // 队列组
+ struct dispatch_group_s {
+	 DISPATCH_OBJECT_HEADER(group);
+	 ...
+ };
+
+ // 信号量
+ struct dispatch_semaphore_s {
+	 DISPATCH_OBJECT_HEADER(semaphore);
+	 ...
+ };
+
+ struct dispatch_disk_s {
+	 DISPATCH_OBJECT_HEADER(disk);
+	 ...
+ };
+
+ struct dispatch_operation_s {
+	 DISPATCH_OBJECT_HEADER(operation);
+	 ...
+ };
+
+ struct dispatch_io_s {
+	 DISPATCH_OBJECT_HEADER(io);
+	 ...
+ };
+*/
+
 
 DISPATCH_COLD
 size_t _dispatch_object_debug_attr(dispatch_object_t dou, char* buf,
