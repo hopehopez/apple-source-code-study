@@ -1196,28 +1196,85 @@ _dispatch_queue_setter_assert_inactive(dispatch_queue_class_t dq)
 
 // Note to later developers: ensure that any initialization changes are
 // made for statically allocated queues (i.e. _dispatch_main_q).
+// 以后的开发人员注意：确保对静态分配的队列（即_dispatch_main_q）进行任何初始化更改。
 static inline dispatch_queue_class_t
 _dispatch_queue_init(dispatch_queue_class_t dqu, dispatch_queue_flags_t dqf,
 		uint16_t width, uint64_t initial_state_bits)
 {
+	//#define DISPATCH_QUEUE_STATE_INIT_VALUE(width) \
+	((DISPATCH_QUEUE_WIDTH_FULL - (width)) << DISPATCH_QUEUE_WIDTH_SHIFT)
+	//#define DISPATCH_QUEUE_WIDTH_FULL  0x1000ull
+	// #define DISPATCH_QUEUE_WIDTH_SHIFT			41
+	// 并发时 dq_state 值：2 << 41 = 0x40000000000
+	// 串行时 dq_state 值：Oxfffull << 41 = 0x1FFE0000000000
 	uint64_t dq_state = DISPATCH_QUEUE_STATE_INIT_VALUE(width);
+	
+	//struct dispatch_queue_s *_dq;
+	//这里取出dqu._dq, 其实就相当于将 dqu由 dispatch_queue_class_t类型 转为dispatch_queue_t类型, 指针地址未变,变得是指针类型
+	/*
+	typedef union {
+		struct dispatch_queue_s *_dq;
+		struct dispatch_workloop_s *_dwl;
+		struct dispatch_lane_s *_dl;
+		struct dispatch_queue_static_s *_dsq;
+		struct dispatch_queue_global_s *_dgq;
+		struct dispatch_queue_pthread_root_s *_dpq;
+		struct dispatch_source_s *_ds;
+		struct dispatch_channel_s *_dch;
+		struct dispatch_mach_s *_dm;
+		dispatch_lane_class_t _dlu;
+	#ifdef __OBJC__
+		id<OS_dispatch_queue> _objc_dq;
+	#endif
+	} dispatch_queue_class_t
+	 */
 	dispatch_queue_t dq = dqu._dq;
-
+	
+	
+	// initial_state_bits = 0x0
 	dispatch_assert((initial_state_bits & ~(DISPATCH_QUEUE_ROLE_MASK |
 			DISPATCH_QUEUE_INACTIVE)) == 0);
 
+	// 当时非活动状态时，initial_state_bits 入参的值是 0x0180000000000000ull（DISPATCH_QUEUE_INACTIVE） 否则是 0
 	if (initial_state_bits & DISPATCH_QUEUE_INACTIVE) {
+		// 如果是非活动状态
+		// 引用计数 +2
 		dq->do_ref_cnt += 2; // rdar://8181908 see _dispatch_lane_resume
+		
+		// _DISPATCH_SOURCE_TYPE = 0x00000013, // meta-type for sources
+		// #define dx_metatype(x) (dx_vtable(x)->do_type & _DISPATCH_META_TYPE_MASK)
+		// #define dx_vtable(x) (&(x)->do_vtable->_os_obj_vtable)
+		// _DISPATCH_META_TYPE_MASK = 0x000000ff, // mask for object meta-types
 		if (dx_metatype(dq) == _DISPATCH_SOURCE_TYPE) {
+			// dq 是 _DISPATCH_SOURCE_TYPE 类型的话，引用计数自增
 			dq->do_ref_cnt++; // released when DSF_DELETED is set
 		}
 	}
 
+	// 以串行为例 dq_state = 0x1FFE0000000000
 	dq_state |= initial_state_bits;
-	dq->do_next = DISPATCH_OBJECT_LISTLESS;
+	dq->do_next = DISPATCH_OBJECT_LISTLESS; // ((void *)0xffffffff89abcdef) 一个字面量硬编码
+	
+	// #define DQF_WIDTH(n) ((dispatch_queue_flags_t)(uint16_t)(n))
+    // 并发队列是 DISPATCH_QUEUE_WIDTH_MAX (Oxffeull)
+	// 串行队列是 1
+	// dqf = 0x00400000 | 1 = 0x00400001
 	dqf |= DQF_WIDTH(width);
+	
+	// #define os_atomic_store2o(p, f, v, m) \
+	//         os_atomic_store(&(p)->f, (v), m)
+	// 原子的给 dq_atomic_flags 赋值，（更新队列的并发数，自定义的并发队列的并发数是 Oxffeull，比根队列少 1，串行队列则是 1）
+	//（上面 _DISPATCH_ROOT_QUEUE_ENTRY 宏展开，看到根队列的并发数是 0xfffull，比自定义的并发队列多 1）
+	// 并发队列是 DISPATCH_QUEUE_WIDTH_MAX (Oxffeull)
+	// 串行队列是 1
+	// dq_atomic_flags 表示了队列的并发数
 	os_atomic_store2o(dq, dq_atomic_flags, dqf, relaxed);
 	dq->dq_state = dq_state;
+	
+	// #define os_atomic_inc_orig(p, m) \
+	//         os_atomic_add_orig((p), 1, m)
+	// 原子加 1
+	// 队列序号
 	dq->dq_serialnum =
 			os_atomic_inc_orig(&_dispatch_queue_serial_numbers, relaxed);
 	return dqu;
@@ -2038,9 +2095,17 @@ _dispatch_get_root_queue(dispatch_qos_t qos, uintptr_t flags)
 		DISPATCH_CLIENT_CRASH(qos, "Corrupted priority");
 	}
 	
+	/*
+	 获取全局并发队列时 / 获取并发队列时
+	 qos = 4, flags = 0
+	 add_on = 0
+	 3 * (4-1) + 0 = 9
+	 全局并发队列的下标为9
+	*/
 
-	/* add_on
-	 DISPATCH_QUEUE_OVERCOMMIT = 2
+	/*
+	  串行时
+	  DISPATCH_QUEUE_OVERCOMMIT = 2
 	 
 	 #define DISPATCH_ROOT_QUEUE_IDX_OFFSET_OVERCOMMIT \
 		 (DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS_OVERCOMMIT - DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS)
@@ -2048,10 +2113,7 @@ _dispatch_get_root_queue(dispatch_qos_t qos, uintptr_t flags)
 	 DISPATCH_ROOT_QUEUE_IDX_MAINTENANCE_QOS = 0
 	 
 	 所以 获取串行队列是时  add_on = 1
-	
-	 
-	 获取全局并发队列时 flags = 0, 所以 add_on = 0
-	 默认的qos = 4, 所以下标应该是 9
+
 	 */
 	unsigned int add_on = 0;
 	if (flags & DISPATCH_QUEUE_OVERCOMMIT) {
@@ -2060,10 +2122,12 @@ _dispatch_get_root_queue(dispatch_qos_t qos, uintptr_t flags)
 		add_on = DISPATCH_ROOT_QUEUE_IDX_OFFSET_COOPERATIVE;
 	}
 	
-    // 3 * (4-1) + 1 = 10
+    // 串行 3 * (4-1) + 1 = 10
+	// 并发 3 * (4-1) + 0 = 9
 	return &_dispatch_root_queues[3 * (qos - 1) + add_on];
 }
-
+//DISPATCH_ROOT_QUEUE_IDX_DEFAULT_QOS = 9
+//主队列时overcommit = true !!(overcommit)=1
 #define _dispatch_get_default_queue(overcommit) \
 		_dispatch_root_queues[DISPATCH_ROOT_QUEUE_IDX_DEFAULT_QOS + \
 				!!(overcommit)]._as_dq

@@ -34,7 +34,8 @@
 
 #pragma mark -
 #pragma mark dispatch_queue_flags, dq_state
-
+//DISPATCH_OPTIONS宏 定义了一个枚举类型,
+//dispatch_queue_flags_t 存储了队列的一些标记信息
 DISPATCH_OPTIONS(dispatch_queue_flags, uint32_t,
 	DQF_NONE                = 0x00000000,
 	DQF_AUTORELEASE_ALWAYS  = 0x00010000,
@@ -687,6 +688,60 @@ struct dispatch_workloop_s {
 	dispatch_unfair_lock_s dq_sidelock; \
 	struct dispatch_object_s *volatile dq_items_head; \
 	uint32_t dq_side_suspend_cnt
+
+/* dispatch_lane_s 宏定义展开
+ typedef struct dispatch_lane_s {
+	 // 表示 dispatch_lane_s 继承的父类 dispatch_queue_s、dispatch_object_s、_os_object_s
+	 struct dispatch_queue_s _as_dq[0];
+	 struct dispatch_object_s _as_do[0];
+	 struct _os_object_s _as_os_obj[0];
+	 
+	 const struct dispatch_lane_vtable_s *do_vtable; // must be pointer-sized
+ 
+	 int volatile do_ref_cnt;
+	 int volatile do_xref_cnt;
+	 
+	 struct dispatch_lane_s *volatile do_next;
+	 struct dispatch_queue_s *do_targetq;
+	 void *do_ctxt;
+	 void *do_finalizer
+	 
+	 struct dispatch_object_s *volatile dq_items_tail;
+	 
+	 union {
+		 uint64_t volatile dq_state;
+		 struct {
+			 dispatch_lock dq_state_lock;
+			 uint32_t dq_state_bits;
+		 };
+	 };
+	 
+	 // LP64 global queue cacheline boundary 
+	 unsigned long dq_serialnum;
+	 const char *dq_label;
+	 
+	 union {
+		 uint32_t volatile dq_atomic_flags;
+		 struct {
+			 const uint16_t dq_width; // 队列的宽度（串行队列为 1，并发队列大于 1）
+			 const uint16_t __dq_opaque2;
+		 };
+	 };
+	 
+	 dispatch_priority_t dq_priority;
+	 union {
+		 struct dispatch_queue_specific_head_s *dq_specific_head;
+		 struct dispatch_source_refs_s *ds_refs;
+		 struct dispatch_timer_source_refs_s *ds_timer_refs;
+		 struct dispatch_mach_recv_refs_s *dm_recv_refs;
+		 struct dispatch_channel_callbacks_s const *dch_callbacks;
+	 };
+	 int volatile dq_sref_cnt;
+	 
+	 dispatch_unfair_lock_s dq_sidelock; // 锁
+	 struct dispatch_object_s *volatile dq_items_head; // 头
+	 uint32_t dq_side_suspend_cnt // 挂起次数
+ */
 
 typedef struct dispatch_lane_s {
 	DISPATCH_LANE_CLASS_HEADER(lane);

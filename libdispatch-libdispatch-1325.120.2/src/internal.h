@@ -164,6 +164,8 @@ typedef union {
 } dispatch_lane_class_t DISPATCH_TRANSPARENT_UNION;
 
 // Dispatch queue cluster class: type for any dispatch_queue_t
+// dispatch_queue_class_t 是一个透明联合类型，且每个成员变量都是指向 dispatch_queue_s 结构体的子类的指针。
+// gcd中带_class_t 的定义, 都是同一类型的指针联合体,
 typedef union {
 	struct dispatch_queue_s *_dq;
 	struct dispatch_workloop_s *_dwl;

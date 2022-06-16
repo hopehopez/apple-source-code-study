@@ -640,9 +640,11 @@ _dispatch_object_set_finalizer(dispatch_object_t dou,
 	}
 }
 
+///主要对 dq 做一些赋值操作。
 dispatch_queue_class_t
 _dispatch_introspection_queue_create(dispatch_queue_t dq)
 {
+	
 	dispatch_queue_introspection_context_t dqic;
 	size_t sz = sizeof(struct dispatch_queue_introspection_context_s);
 
@@ -650,18 +652,22 @@ _dispatch_introspection_queue_create(dispatch_queue_t dq)
 		sz = offsetof(struct dispatch_queue_introspection_context_s,
 				__dqic_no_queue_inversion);
 	}
+	//  申请空间
 	dqic = _dispatch_calloc(1, sz);
 	dqic->dqic_queue._dq = dq;
 	if (_dispatch_introspection.debug_queue_inversions) {
 		LIST_INIT(&dqic->dqic_order_top_head);
 		LIST_INIT(&dqic->dqic_order_bottom_head);
 	}
+	//函数赋值
 	dq->do_introspection_ctxt = dqic;
-
+	
+	// 加锁
 	_dispatch_unfair_lock_lock(&_dispatch_introspection.queues_lock);
 	LIST_INSERT_HEAD(&_dispatch_introspection.queues, dqic, dqic_list);
 	_dispatch_unfair_lock_unlock(&_dispatch_introspection.queues_lock);
 
+	// hook
 	DISPATCH_INTROSPECTION_INTERPOSABLE_HOOK_CALLOUT(queue_create, dq);
 	if (DISPATCH_INTROSPECTION_HOOK_ENABLED(queue_create)) {
 		_dispatch_introspection_queue_create_hook(dq);

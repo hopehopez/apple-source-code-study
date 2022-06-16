@@ -249,10 +249,19 @@ const struct dispatch_tsd_indexes_s dispatch_tsd_indexes = {
 // 6618342 Contact the team that owns the Instrument DTrace probe before
 //         renaming this symbol
 struct dispatch_queue_static_s _dispatch_main_q = {
-	DISPATCH_GLOBAL_OBJECT_HEADER(queue_main),
+	DISPATCH_GLOBAL_OBJECT_HEADER(queue_main),// 继承自父类
 #if !DISPATCH_USE_RESOLVERS
+	// 是否有目标队列（从根队列数组中取出 DISPATCH_ROOT_QUEUE_IDX_DEFAULT_QOS + !!(overcommit) 为下标的队列作为目标队列）
+	// #define _dispatch_get_default_queue(overcommit) \
+	//         _dispatch_root_queues[DISPATCH_ROOT_QUEUE_IDX_DEFAULT_QOS + \
+	//                 !!(overcommit)]._as_dq
 	.do_targetq = _dispatch_get_default_queue(true),
 #endif
+	// #define DISPATCH_QUEUE_STATE_INIT_VALUE(width) \
+	//         ((DISPATCH_QUEUE_WIDTH_FULL - (width)) << DISPATCH_QUEUE_WIDTH_SHIFT)
+	// #define DISPATCH_QUEUE_WIDTH_FULL  0x1000ull
+	// #define DISPATCH_QUEUE_WIDTH_SHIFT 41
+	// #define DISPATCH_QUEUE_ROLE_BASE_ANON  0x0000001000000000ull
 	.dq_state = DISPATCH_QUEUE_STATE_INIT_VALUE(1) |
 			DISPATCH_QUEUE_ROLE_BASE_ANON,
 	.dq_label = "com.apple.main-thread",
@@ -462,6 +471,25 @@ const struct dispatch_queue_attr_s _dispatch_queue_attrs[] = {
 	},
 };
 
+/*
+ #define DISPATCH_GLOBAL_OBJECT_HEADER(name) \
+	 .do_vtable = DISPATCH_VTABLE(name), \
+	 .do_ref_cnt = DISPATCH_OBJECT_GLOBAL_REFCNT, \
+	 .do_xref_cnt = DISPATCH_OBJECT_GLOBAL_REFCNT
+ 
+ #define DISPATCH_VTABLE(name) DISPATCH_OBJC_CLASS(name)
+ #define DISPATCH_OBJC_CLASS(name)	(&DISPATCH_CLASS_SYMBOL(name))
+ #define DISPATCH_CLASS_SYMBOL(name) _dispatch_##name##_vtable
+ 
+ #define DISPATCH_OBJECT_GLOBAL_REFCNT		_OS_OBJECT_GLOBAL_REFCNT
+ #define _OS_OBJECT_GLOBAL_REFCNT INT_MAX
+ 
+ struct dispatch_queue_attr_s _dispatch_queue_attr_concurrent = {
+ .do_vtable = (&_dispatch_queue_attr_vtable)
+ .do_ref_cnt = INT_MAX
+ .do_xref_cnt = INT_MAX
+ };
+ */
 #if DISPATCH_VARIANT_STATIC
 // <rdar://problem/16778703>
 struct dispatch_queue_attr_s _dispatch_queue_attr_concurrent = {
@@ -492,6 +520,8 @@ _dispatch_queue_attr_to_info(dispatch_queue_attr_t dqa)
 	if (dqa == &_dispatch_queue_attr_concurrent) {
 		// 如果相等，则把 dqai 的 dqai_concurrent 成员变量置为 true，表示是一个并发队列属性
 		dqai.dqai_concurrent = true;
+		
+		//创建自定义的并发队列是,在这里返回
 		return dqai;
 	}
 #endif
