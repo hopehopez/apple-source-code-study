@@ -1245,6 +1245,7 @@ _dispatch_queue_init(dispatch_queue_class_t dqu, dispatch_queue_flags_t dqf,
 		// #define dx_metatype(x) (dx_vtable(x)->do_type & _DISPATCH_META_TYPE_MASK)
 		// #define dx_vtable(x) (&(x)->do_vtable->_os_obj_vtable)
 		// _DISPATCH_META_TYPE_MASK = 0x000000ff, // mask for object meta-types
+		//(&(dq)->do_vtable->_os_obj_vtable)->do_type & 0x000000ff
 		if (dx_metatype(dq) == _DISPATCH_SOURCE_TYPE) {
 			// dq 是 _DISPATCH_SOURCE_TYPE 类型的话，引用计数自增
 			dq->do_ref_cnt++; // released when DSF_DELETED is set
@@ -1451,19 +1452,53 @@ _dispatch_queue_drain_try_lock_wlh(dispatch_queue_t dq, uint64_t *dq_state)
  *
  * Initial state must be `completely idle`
  * Final state forces { ib:1, qf:1, w:0 }
+ 请注意，如果 e:1 或 dl!=0 中的任何一个，这将失败，但这允许此代码是一个简单的 cmpxchg，这在 Intel 上明显更快，并且在非竞争代码路径上产生显着差异。
+   请参阅 queue_internal.h 中有关 DISPATCH_QUEUE_DIRTY 的讨论
+ 初始状态必须是“完全空闲”最终状态强制 { ib:1, qf:1, w:0 }
+ 
  */
 DISPATCH_ALWAYS_INLINE DISPATCH_WARN_RESULT
 static inline bool
 _dispatch_queue_try_acquire_barrier_sync_and_suspend(dispatch_lane_t dq,
 		uint32_t tid, uint64_t suspend_count)
 {
+	//suspend_count = 0
+	//如果 dq->dq_width 值为 1，则 init = 0xfffull << 41
 	uint64_t init  = DISPATCH_QUEUE_STATE_INIT_VALUE(dq->dq_width);
+	
+	
+	// #define DISPATCH_QUEUE_WIDTH_FULL_BIT   0x0020000000000000ull
+	// #define DISPATCH_QUEUE_IN_BARRIER   0x0040000000000000ull // 当队列当前正在执行 barrier 时，此位置 1
+	// #define DISPATCH_QUEUE_SUSPEND_INTERVAL   0x0400000000000000ull
+
+	//  _dispatch_lock_value_from_tid 位操作取得 dispatch_lock。
+	
 	uint64_t value = DISPATCH_QUEUE_WIDTH_FULL_BIT | DISPATCH_QUEUE_IN_BARRIER |
 			_dispatch_lock_value_from_tid(tid) |
 			DISPATCH_QUEUE_UNCONTENDED_SYNC |
 			(suspend_count * DISPATCH_QUEUE_SUSPEND_INTERVAL);
 	uint64_t old_state, new_state;
 
+	/*
+	 #define DISPATCH_QUEUE_ROLE_MASK   0x0000003000000000ull
+     #define os_atomic_rmw_loop2o(p, f, ov, nv, m, ...) os_atomic_rmw_loop(&(p)->f, ov, nv, m, __VA_ARGS__)
+	
+	 #define os_atomic_rmw_loop(p, ov, nv, m, ...)  ({ \
+			 bool _result = false; \
+			 __typeof__(p) _p = (p); \
+			 ov = os_atomic_load(_p, relaxed); \
+			 do { \
+				 __VA_ARGS__; \
+				 _result = os_atomic_cmpxchgvw(_p, ov, nv, &ov, m); \
+			 } while (unlikely(!_result)); \
+			 _result; \
+		 })
+	 #define os_atomic_cmpxchgvw(p, e, v, g, m) \
+			 ({ _os_atomic_basetypeof(p) _r = (e); _Bool _b = \
+			 atomic_compare_exchange_weak_explicit(_os_atomic_c11_atomic(p), \
+			 &_r, v, memory_order_##m, memory_order_relaxed); *(g) = _r;  _b; })
+	 */
+	// 从底层获取信息 -- 状态信息 - 当前队列 - 线程
 	return os_atomic_rmw_loop2o(dq, dq_state, old_state, new_state, acquire, {
 		uint64_t role = old_state & DISPATCH_QUEUE_ROLE_MASK;
 		if (old_state != (init | role)) {
@@ -1890,7 +1925,27 @@ static inline void
 _dispatch_root_queue_push_inline(dispatch_queue_global_t dq,
 		dispatch_object_t _head, dispatch_object_t _tail, int n)
 {
+	//n=1
+	
 	struct dispatch_object_s *hd = _head._do, *tl = _tail._do;
+	//#define os_mpsc(q, _ns, ...)   (q, _ns, __VA_ARGS__)
+	//#define os_mpsc_push_list(Q, head, tail, _o_next)  ({ \
+	   os_mpsc_node_type(Q) _token; \
+	   _token = os_mpsc_push_update_tail(Q, tail, _o_next); \
+	   os_mpsc_push_update_prev(Q, _token, head, _o_next); \
+	   os_mpsc_push_was_empty(_token); \
+   })
+	//#define os_mpsc_node_type(Q) _os_atomic_basetypeof(_os_mpsc_head Q)
+	/*
+	 #define os_mpsc_push_update_tail(Q, tail, _o_next)  ({ \
+		os_mpsc_node_type(Q) _tl = (tail); \
+		os_atomic_store2o(_tl, _o_next, NULL, relaxed); \
+		_dispatch_set_enqueuer_for(_os_mpsc_tail Q); \
+		os_atomic_xchg(_os_mpsc_tail Q, _tl, release); \
+	})
+	 */
+    //#define os_mpsc_push_was_empty(prev) ((prev) == NULL)
+	
 	if (unlikely(os_mpsc_push_list(os_mpsc(dq, dq_items), hd, tl, do_next))) {
 		return _dispatch_root_queue_poke(dq, n, 0);
 	}
@@ -2562,6 +2617,7 @@ _dispatch_is_background_thread(void)
 
 #ifdef __BLOCKS__
 
+///判断 block 的 invoke 函数指针指向是否是 _dispatch_block_special_invoke（一个外联的函数指针）
 DISPATCH_ALWAYS_INLINE
 static inline bool
 _dispatch_block_has_private_data(const dispatch_block_t block)
@@ -2626,6 +2682,7 @@ _dispatch_block_get_flags(const dispatch_block_t db)
 #pragma mark -
 #pragma mark dispatch_continuation_t
 
+//_dispatch_continuation_alloc_cacheonly 函数内部调用 _dispatch_thread_getspecific 函数从当前线程获取根据 dispatch_cache_key 作为 key 保存的 dispatch_continuation_t 赋值给 dc，然后把 dc 的 do_next 作为新的 value 调用 _dispatch_thread_setspecific 函数保存在当前线程的存储空间中。（即更新当前缓存中可用的 dispatch_continuation_t）
 DISPATCH_ALWAYS_INLINE
 static inline dispatch_continuation_t
 _dispatch_continuation_alloc_cacheonly(void)
@@ -2633,6 +2690,7 @@ _dispatch_continuation_alloc_cacheonly(void)
 	dispatch_continuation_t dc = (dispatch_continuation_t)
 			_dispatch_thread_getspecific(dispatch_cache_key);
 	if (likely(dc)) {
+		// 更新 dispatch_cache_key 作为 key 保存在线程存储空间中的值
 		_dispatch_thread_setspecific(dispatch_cache_key, dc->do_next);
 	}
 	return dc;
@@ -2642,8 +2700,12 @@ DISPATCH_ALWAYS_INLINE
 static inline dispatch_continuation_t
 _dispatch_continuation_alloc(void)
 {
+	
+	//从缓存中找 dispatch_continuation_t
 	dispatch_continuation_t dc =
 			_dispatch_continuation_alloc_cacheonly();
+	
+	//如果找不到则调用 _dispatch_continuation_alloc_from_heap 函数在堆区新建一个
 	if (unlikely(!dc)) {
 		return _dispatch_continuation_alloc_from_heap();
 	}
@@ -2829,6 +2891,7 @@ _dispatch_continuation_priority_set(dispatch_continuation_t dc,
 	return qos;
 }
 
+///配置 dispatch_continuation_s 结构体变量的成员变量，将传入的参数对 dc 进行赋值，并执行 _dispatch_continuation_voucher_set 和 _dispatch_continuation_priority_set 函数。
 DISPATCH_ALWAYS_INLINE
 static inline dispatch_qos_t
 _dispatch_continuation_init_f(dispatch_continuation_t dc,
@@ -2837,37 +2900,70 @@ _dispatch_continuation_init_f(dispatch_continuation_t dc,
 {
 	pthread_priority_t pp = 0;
 	dc->dc_flags = dc_flags | DC_FLAG_ALLOCATED;
-	dc->dc_func = f;
+	dc->dc_func = f; // 待执行的函数
 	dc->dc_ctxt = ctxt;
 	// in this context DISPATCH_BLOCK_HAS_PRIORITY means that the priority
 	// should not be propagated, only taken from the handler if it has one
+	// 在此上下文中 DISPATCH_BLOCK_HAS_PRIORITY，这意味着不应传播优先级，只有在处理程序具有一个
 	if (!(flags & DISPATCH_BLOCK_HAS_PRIORITY)) {
 		pp = _dispatch_priority_propagate();
 	}
+	// 配置 voucher
 	_dispatch_continuation_voucher_set(dc, flags);
+	// 配置 priority
 	return _dispatch_continuation_priority_set(dc, dqu, pp, flags);
 }
 
+///_dispatch_continuation_init 函数是根据入参对 dc 进行初始化。
 DISPATCH_ALWAYS_INLINE
 static inline dispatch_qos_t
 _dispatch_continuation_init(dispatch_continuation_t dc,
 		dispatch_queue_class_t dqu, dispatch_block_t work,
 		dispatch_block_flags_t flags, uintptr_t dc_flags)
 {
+	/* async时,
+	    	flags 是 0,
+	     dc_flags 是 DC_FLAG_CONSUME（0x004ul）
+	 */
+	
+	// 把入参 block 复制到堆区（内部是调用了 Block_copy 函数）
 	void *ctxt = _dispatch_Block_copy(work);
 
+	
+	/*
+	 // #define DC_FLAG_BLOCK   0x010ul
+	 //#define DC_FLAG_ALLOCATED	 0x100ul
+	 async时, dc_flags |= 0x010 | 0x100 = 0x114
+	 */
 	dc_flags |= DC_FLAG_BLOCK | DC_FLAG_ALLOCATED;
+	
+	// 判断 work block 的函数是否等于一个外联的函数指针
 	if (unlikely(_dispatch_block_has_private_data(work))) {
 		dc->dc_flags = dc_flags;
 		dc->dc_ctxt = ctxt;
 		// will initialize all fields but requires dc_flags & dc_ctxt to be set
+		// 执行 dispatch_continuation_s 的慢速初始化
 		return _dispatch_continuation_init_slow(dc, dqu, flags);
 	}
 
+	//#define _dispatch_Block_invoke(bb) \
+		((dispatch_function_t)((struct Block_layout *)bb)->invoke)
+	// 取出 block 的函数指针（将 work 的函数封装成 dispatch_function_t）
+	// 取得 block 结构体中的 invoke 成员变量
 	dispatch_function_t func = _dispatch_Block_invoke(work);
+	
+	// async时, if语句会执行
 	if (dc_flags & DC_FLAG_CONSUME) {
+		//此时 _dispatch_call_block_and_release 就是 work
+		// _dispatch_call_block_and_release函数里会 执行一个 block 然后释放 block。
 		func = _dispatch_call_block_and_release;
 	}
+	/*
+	 参数
+	 func = _dispatch_call_block_and_release,
+	 flags = 0
+	 dc_flags = 0x114
+	*/
 	return _dispatch_continuation_init_f(dc, dqu, ctxt, func, flags, dc_flags);
 }
 
@@ -2883,6 +2979,12 @@ _dispatch_continuation_async(dispatch_queue_class_t dqu,
 #else
 	(void)dc_flags;
 #endif
+	//#define dx_push(x, y, z) dx_vtable(x)->dq_push(x, y, z)
+	//#define dx_vtable(x) (&(x)->do_vtable->_os_obj_vtable)
+	//void (*const dq_push)(dispatch_queue_class_t, dispatch_object_t, dispatch_qos_t)
+	//(&(dqu._dq)->do_vtable->_os_obj_vtable)->dq_push(x, y, z)
+	// 调用队列的 dq_push 函数
+	// .dq_push        = _dispatch_root_queue_push,
 	return dx_push(dqu._dq, dc, qos);
 }
 

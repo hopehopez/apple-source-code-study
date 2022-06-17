@@ -108,6 +108,7 @@ DISPATCH_ALWAYS_INLINE
 static inline dispatch_lock
 _dispatch_lock_value_from_tid(dispatch_tid tid)
 {
+	//#define DLOCK_OWNER_MASK			((dispatch_lock)0xfffffffc)
 	return tid & DLOCK_OWNER_MASK;
 }
 
@@ -130,6 +131,10 @@ DISPATCH_ALWAYS_INLINE
 static inline bool
 _dispatch_lock_is_locked_by(dispatch_lock lock_value, dispatch_tid tid)
 {
+	// #define DISPATCH_QUEUE_DRAIN_OWNER_MASK   ((uint64_t)DLOCK_OWNER_MASK)
+	// lock_value 为队列状态，tid 为线程 id
+	// ^ (异或运算法) 两个相同就会出现 0 否则为 1
+	
 	// equivalent to _dispatch_lock_owner(lock_value) == tid
 	return ((lock_value ^ tid) & DLOCK_OWNER_MASK) == 0;
 }

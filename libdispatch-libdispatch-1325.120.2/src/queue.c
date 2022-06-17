@@ -919,11 +919,21 @@ dispatch_async_enforce_qos_class_f(dispatch_queue_t dq, void *ctxt,
 void
 dispatch_async(dispatch_queue_t dq, dispatch_block_t work)
 {
+	//// 取得一个 dispatch_continuation_s (从缓存中获取或者新建)
 	dispatch_continuation_t dc = _dispatch_continuation_alloc();
+	
+	// DC_FLAG_CONSUME 标记 dc 是设置在异步中的源程序（即表明 dispatch_continuation_s 是一个在异步中执行的任务）
+	// #define DC_FLAG_CONSUME   0x004ul
 	uintptr_t dc_flags = DC_FLAG_CONSUME;
+	
+	// dispatch_qos_t 是一个 uint32_t 类型别名
 	dispatch_qos_t qos;
 
+	// 对 dispatch_continuations_s 结构体变量进行一系列初始化和配置
 	qos = _dispatch_continuation_init(dc, dq, work, 0, dc_flags);
+	
+	// dispatch_continuations_s 结构变量准备完毕后会嵌套调用 _dispatch_continuation_async 函数
+	// dc_flags = 0x114
 	_dispatch_continuation_async(dq, dc, qos, dc->dc_flags);
 }
 #endif
@@ -1538,6 +1548,7 @@ _dispatch_lane_barrier_complete(dispatch_lane_class_t dqu, dispatch_qos_t qos,
 	if (dq->dq_items_tail && !DISPATCH_QUEUE_IS_SUSPENDED(dq)) {
 		struct dispatch_object_s *dc = _dispatch_queue_get_head(dq);
 		if (likely(dq->dq_width == 1 || _dispatch_object_is_barrier(dc))) {
+			
 			if (_dispatch_object_is_waiter(dc)) {
 				return _dispatch_lane_drain_barrier_waiter(dq, dc, flags, 0);
 			}
@@ -1646,6 +1657,10 @@ DISPATCH_NOINLINE
 static void
 __DISPATCH_WAIT_FOR_QUEUE__(dispatch_sync_context_t dsc, dispatch_queue_t dq)
 {
+	// 获取队列的状态，看是否是处于等待状态
+	// dsc->dsc_waiter = _dispatch_tid_self()
+	// ((lock_value ^ tid) & DLOCK_OWNER_MASK) == 0
+	// lock_value 为队列状态，tid 为线程 id
 	uint64_t dq_state = _dispatch_wait_prepare(dq);
 	if (unlikely(_dq_state_drain_locked_by(dq_state, dsc->dsc_waiter))) {
 		DISPATCH_CLIENT_CRASH((uintptr_t)dq_state,
@@ -1741,6 +1756,7 @@ _dispatch_barrier_trysync_or_async_f(dispatch_lane_t dq, void *ctxt,
 #pragma mark -
 #pragma mark dispatch_sync / dispatch_barrier_sync
 
+///_dispatch_sync_f_slow 函数中生成了一些任务的信息，然后通过 _dispatch_trace_item_push 来进行压栈操作，从而存放在我们的同步队列中（FIFO）,从而实现函数的执行
 DISPATCH_NOINLINE
 static void
 _dispatch_sync_f_slow(dispatch_queue_class_t top_dqu, void *ctxt,
@@ -1754,6 +1770,7 @@ _dispatch_sync_f_slow(dispatch_queue_class_t top_dqu, void *ctxt,
 	}
 
 	pthread_priority_t pp = _dispatch_get_priority();
+	// 任务信息
 	struct dispatch_sync_context_s dsc = {
 		.dc_flags    = DC_FLAG_SYNC_WAITER | dc_flags,
 		.dc_func     = _dispatch_async_and_wait_invoke,
@@ -1766,7 +1783,14 @@ _dispatch_sync_f_slow(dispatch_queue_class_t top_dqu, void *ctxt,
 		.dsc_waiter  = _dispatch_tid_self(),
 	};
 
+	//重点 - 压栈
+	//push 任务
 	_dispatch_trace_item_push(top_dq, &dsc);
+	
+	/*
+	__DISPATCH_WAIT_FOR_QUEUE__ 函数中，它会获取到队列的状态，看其是否为等待状态，然后调用 _dq_state_drain_locked_by 中的异或运算，判断队列和线程的等待状态，如果两者都在等待，那么就会返回 YES，从而造成死锁的崩溃。
+
+	 */
 	__DISPATCH_WAIT_FOR_QUEUE__(&dsc, dq);
 
 	if (dsc.dsc_func == NULL) {
@@ -1816,6 +1840,8 @@ static inline void
 _dispatch_barrier_sync_f_inline(dispatch_queue_t dq, void *ctxt,
 		dispatch_function_t func, uintptr_t dc_flags)
 {
+	// 获取当前线程的 ID（TLS 技术保存在线程的存储空间内）
+	//#define _dispatch_tid_self()		((dispatch_tid)_dispatch_thread_port())
 	dispatch_tid tid = _dispatch_tid_self();
 
 	if (unlikely(dx_metatype(dq) != _DISPATCH_LANE_TYPE)) {
@@ -1825,14 +1851,20 @@ _dispatch_barrier_sync_f_inline(dispatch_queue_t dq, void *ctxt,
 	dispatch_lane_t dl = upcast(dq)._dl;
 	// The more correct thing to do would be to merge the qos of the thread
 	// that just acquired the barrier lock into the queue state.
+	// 更加正确的做法是将刚获得屏障锁的线程的质量合并到队列状态。
 	//
 	// However this is too expensive for the fast path, so skip doing it.
 	// The chosen tradeoff is that if an enqueue on a lower priority thread
 	// contends with this fast path, this thread may receive a useless override.
+	// 但是，这对于快速路径而言太昂贵了，因此请跳过此步骤。
+	// 选择的权衡是，如果优先级较低的线程上的队列与此快速路径竞争，
+	// 则此线程可能会收到无用的覆盖。
 	//
 	// Global concurrent queues and queues bound to non-dispatch threads
 	// always fall into the slow case, see DISPATCH_ROOT_QUEUE_STATE_INIT_VALUE
+	// 全局并发队列和绑定到非调度线程的队列总是处于慢速状态，
 	if (unlikely(!_dispatch_queue_try_acquire_barrier_sync(dl, tid))) {
+		//_dispatch_sync_f_slow 可能会造成死锁
 		return _dispatch_sync_f_slow(dl, ctxt, func, DC_FLAG_BARRIER, dl,
 				DC_FLAG_BARRIER | dc_flags);
 	}
@@ -1841,7 +1873,11 @@ _dispatch_barrier_sync_f_inline(dispatch_queue_t dq, void *ctxt,
 		return _dispatch_sync_recurse(dl, ctxt, func,
 				DC_FLAG_BARRIER | dc_flags);
 	}
+	
+	
 	_dispatch_introspection_sync_begin(dl);
+	
+	// 执行 block
 	_dispatch_lane_barrier_sync_invoke_and_complete(dl, ctxt, func
 			DISPATCH_TRACE_ARG(_dispatch_trace_item_sync_push_pop(
 					dq, ctxt, func, dc_flags | DC_FLAG_BARRIER)));
@@ -1869,9 +1905,15 @@ _dispatch_sync_f_inline(dispatch_queue_t dq, void *ctxt,
 		dispatch_function_t func, uintptr_t dc_flags)
 {
 	if (likely(dq->dq_width == 1)) {
+		//串行队列 在此执行
 		return _dispatch_barrier_sync_f(dq, ctxt, func, dc_flags);
 	}
+	
+	//并发队列, 继续向下执行
 
+	// _DISPATCH_LANE_TYPE = 0x00000011, // meta-type for lanes
+	// _DISPATCH_META_TYPE_MASK = 0x000000ff, // mask for object meta-types
+	// #define dx_metatype(x) (dx_vtable(x)->do_type & _DISPATCH_META_TYPE_MASK)
 	if (unlikely(dx_metatype(dq) != _DISPATCH_LANE_TYPE)) {
 		DISPATCH_CLIENT_CRASH(0, "Queue type doesn't support dispatch_sync");
 	}
@@ -1879,6 +1921,7 @@ _dispatch_sync_f_inline(dispatch_queue_t dq, void *ctxt,
 	dispatch_lane_t dl = upcast(dq)._dl;
 	// Global concurrent queues and queues bound to non-dispatch threads
 	// always fall into the slow case, see DISPATCH_ROOT_QUEUE_STATE_INIT_VALUE
+	// 绑定到非调度线程（non-dispatch threads）的队列和全局并发队列（global concurrent queues）始终属于缓慢情况（slow case）
 	if (unlikely(!_dispatch_queue_try_reserve_sync_width(dl))) {
 		return _dispatch_sync_f_slow(dl, ctxt, func, 0, dl, dc_flags);
 	}
@@ -1957,10 +2000,14 @@ DISPATCH_NOINLINE
 void
 dispatch_sync(dispatch_queue_t dq, dispatch_block_t work)
 {
+	//#define DC_FLAG_BLOCK	0x010ul
 	uintptr_t dc_flags = DC_FLAG_BLOCK;
+	
+	//判断 block 的 invoke 函数指针指向是否是 _dispatch_block_special_invoke（一个外联的函数指针）
 	if (unlikely(_dispatch_block_has_private_data(work))) {
 		return _dispatch_sync_block_with_privdata(dq, work, dc_flags);
 	}
+	
 	_dispatch_sync_f(dq, work, _dispatch_Block_invoke(work), dc_flags);
 }
 #endif // __BLOCKS__
@@ -6536,16 +6583,22 @@ _dispatch_debug_root_queue(dispatch_queue_class_t dqu, const char *str)
 #define _dispatch_debug_root_queue(...)
 #endif // DISPATCH_DEBUG && DISPATCH_ROOT_QUEUE_DEBUG
 
+/*
+ 根据代码可以知道，系统会获取线程池总数量和可以创建的数量，然后通过两个 do while 来进行动态的开辟线程。
+  完整的函数调用栈大概精简如下：dispatch_async ➡️ _dispatch_continuation_init ➡️ _dispatch_continuation_async ➡️ dx_push ➡️ dq_push（_dispatch_root_queue_push）➡️ _dispatch_root_queue_push_inline ➡️ _dispatch_root_queue_poke ➡️ _dispatch_root_queue_poke_slow ➡️ pthread_create。
+ */
 DISPATCH_NOINLINE
 static void
 _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 {
+	// n = 1
 	int remaining = n;
 #if !defined(_WIN32)
 	int r = ENOSYS;
 #endif
-
+	// 创建与根队列相关的线程池（内部调用了 dispatch_once_f，全局只会只会执行一次）
 	_dispatch_root_queues_init();
+	// DEGBUG 模式时的打印 __func__ 函数执行
 	_dispatch_debug_root_queue(dq, __func__);
 	_dispatch_trace_runtime_event(worker_request, dq, (uint64_t)n);
 
@@ -6596,16 +6649,20 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 
 	int can_request, t_count;
 	// seq_cst with atomic store to tail <rdar://problem/16932833>
+	// 获取线程池的大小 floor=0
 	t_count = os_atomic_load2o(dq, dgq_thread_pool_size, ordered);
 	do {
+		// 计算可以请求的数量
 		can_request = t_count < floor ? 0 : t_count - floor;
 		if (remaining > can_request) {
 			_dispatch_root_queue_debug("pthread pool reducing request from %d to %d",
 					remaining, can_request);
+			//remaining减少
 			os_atomic_sub2o(dq, dgq_pending, remaining - can_request, relaxed);
 			remaining = can_request;
 		}
 		if (remaining == 0) {
+			// 线程池无可用将会报错
 			_dispatch_root_queue_debug("pthread pool is full for root queue: "
 					"%p", dq);
 			return;
@@ -6622,11 +6679,14 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 	}
 #endif
 	do {
+		
 		_dispatch_retain(dq); // released in _dispatch_worker_thread
+		// 开辟线程 pthread_create
 		while ((r = pthread_create(pthr, attr, _dispatch_worker_thread, dq))) {
 			if (r != EAGAIN) {
 				(void)dispatch_assume_zero(r);
 			}
+			//sleep(1);
 			_dispatch_temporary_resource_shortage();
 		}
 	} while (--remaining);

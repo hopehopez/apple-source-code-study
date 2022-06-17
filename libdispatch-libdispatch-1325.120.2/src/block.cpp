@@ -115,6 +115,9 @@ _dispatch_block_create(dispatch_block_flags_t flags, voucher_t voucher,
 	}));
 }
 
+
+
+/// 一个外联的函数指针。
 extern "C" {
 // The compiler hides the name of the function it generates, and changes it if
 // we try to reference it directly, but the linker still sees it.

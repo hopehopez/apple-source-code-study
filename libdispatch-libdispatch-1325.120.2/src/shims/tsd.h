@@ -259,6 +259,7 @@ _dispatch_thread_getspecific(pthread_key_t k)
 		return _pthread_getspecific_direct(k);
 	}
 #endif
+	//从当前线程获取
 	return pthread_getspecific(k);
 }
 

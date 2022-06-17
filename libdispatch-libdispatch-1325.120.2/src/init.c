@@ -1535,7 +1535,7 @@ _dispatch_strdup_if_mutable(const char *str)
 #pragma mark dispatch_block_t
 
 #ifdef __BLOCKS__
-
+///_dispatch_Block_copy 内部调用 Block_copy 函数，把栈区 block 复制到堆区，或者堆区 block 引用加 1。
 void *
 (_dispatch_Block_copy)(void *db)
 {
@@ -1543,6 +1543,7 @@ void *
 
 	if (likely(db)) {
 		while (unlikely(!(rval = Block_copy(db)))) {
+			// 保证 block 复制成功
 			_dispatch_temporary_resource_shortage();
 		}
 		return rval;
@@ -1550,6 +1551,7 @@ void *
 	DISPATCH_CLIENT_CRASH(0, "NULL was passed where a block should have been");
 }
 
+//执行一个 block 然后释放 block。
 void
 _dispatch_call_block_and_release(void *block)
 {

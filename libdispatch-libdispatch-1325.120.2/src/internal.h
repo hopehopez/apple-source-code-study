@@ -678,6 +678,7 @@ _dispatch_object_debug(dispatch_object_t object, const char *message, ...);
 #endif // DISPATCH_DEBUG
 
 #ifdef __BLOCKS__
+///取得 block 结构体中的 invoke 成员变量。
 #define _dispatch_Block_invoke(bb) \
 		((dispatch_function_t)((struct Block_layout *)bb)->invoke)
 

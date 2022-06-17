@@ -1205,10 +1205,12 @@ dispatch_queue_attr_info_t _dispatch_queue_attr_to_info(dispatch_queue_attr_t);
 #define DC_FLAG_BARRIER					0x002ul
 // continuation resources are freed on run
 // this is set on async or for non event_handler source handlers
+// continuation resources 在运行时释放，表示 dispatch_continuation_s 是设置在异步或 non event_handler 源处理程序。
 #define DC_FLAG_CONSUME					0x004ul
 // continuation has a group in dc_data
 #define DC_FLAG_GROUP_ASYNC				0x008ul
 // continuation function is a block (copied in dc_ctxt)
+// continuation function 是一个 block。
 #define DC_FLAG_BLOCK					0x010ul
 // continuation function is a block with private data, implies BLOCK_BIT
 #define DC_FLAG_BLOCK_WITH_PRIVATE_DATA	0x020ul
@@ -1217,6 +1219,7 @@ dispatch_queue_attr_info_t _dispatch_queue_attr_to_info(dispatch_queue_attr_t);
 // continuation is a dispatch_async_and_wait
 #define DC_FLAG_ASYNC_AND_WAIT			0x080ul
 // bit used to make sure dc_flags is never 0 for allocated continuations
+// bit 用于确保分配的 continuations 的 dc_flags 永远不会为 0。
 #define DC_FLAG_ALLOCATED				0x100ul
 // continuation is an internal implementation detail that should not be
 // introspected
