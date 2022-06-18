@@ -17,7 +17,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "2977"
             endingLineNumber = "2977"
-            landmarkName = "dispatch_queue_create(label, attr)"
+            landmarkName = "_dispatch_lane_create_with_target(label, dqa, tq, legacy)"
             landmarkType = "9">
          </BreakpointContent>
       </BreakpointProxy>
@@ -35,7 +35,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "2752"
             endingLineNumber = "2752"
-            landmarkName = "_dispatch_lane_create_with_target(label, dqa, tq, legacy)"
+            landmarkName = "_dispatch_queue_priority_inherit_from_target(dq, tq)"
             landmarkType = "9">
          </BreakpointContent>
       </BreakpointProxy>
@@ -100,7 +100,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "8258"
             endingLineNumber = "8258"
-            landmarkName = "libdispatch_init()"
+            landmarkName = "_dispatch_root_queues_init_once(DISPATCH_UNUSED)"
             landmarkType = "9">
          </BreakpointContent>
       </BreakpointProxy>
@@ -216,7 +216,7 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "8224"
             endingLineNumber = "8224"
-            landmarkName = "dispatch_get_global_queue(priority, flags)"
+            landmarkName = "_dispatch_root_queues_init_once(DISPATCH_UNUSED)"
             landmarkType = "9">
          </BreakpointContent>
       </BreakpointProxy>
