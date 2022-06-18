@@ -29,7 +29,7 @@
 
 struct dispatch_queue_s;
 
-/*
+/* dispatch_semaphore_s结构体全部展开后
 struct dispatch_semaphore_s;
 
 // OS_OBJECT_CLASS_DECL(dispatch_semaphore, DISPATCH_OBJECT_VTABLE_HEADER(dispatch_semaphore))
@@ -101,23 +101,31 @@ struct dispatch_semaphore_s {
  *   0 after a dispatch_group_leave. This 32bit word is used to block waiters
  *   (threads in dispatch_group_wait) in _dispatch_wait_on_address() until the
  *   generation changes.
+ *   每次组值在 dispatch_group_leave 后达到 0 时递增的 32 位计数器。
+ * 这个 32 位字用于阻塞 _dispatch_wait_on_address() 中的等待者（dispatch_group_wait 中的线程），直到代发生变化。
  *
  * Value (2 - 31):
  *   30 bit value counter of the number of times the group was entered.
  *   dispatch_group_enter counts downward on 32bits, and dispatch_group_leave
  *   upward on 64bits, which causes the generation to bump each time the value
  *   reaches 0 again due to carry propagation.
+ * 进入组的次数的 30 位值计数器。 
+ * dispatch_group_enter 在 32bits 上向下计数，dispatch_group_leave 在 64bits 上向上计数，
+ * 这会导致每次由于进位传播，值再次达到 0 时产生碰撞。
  *
  * Has Notifs (1):
  *   This bit is set when the list of notifications on the group becomes non
  *   empty. It is also used as a lock as the thread that successfuly clears this
  *   bit is the thread responsible for firing the notifications.
+ * 当组上的通知列表变为非空时设置此位。 它也用作锁，因为成功清除该位的线程是负责触发通知的线程。
  *
  * Has Waiters (0):
  *   This bit is set when there are waiters (threads in dispatch_group_wait)
  *   that need to be woken up the next time the value reaches 0. Waiters take
  *   a snapshot of the generation before waiting and will wait for the
  *   generation to change before they return.
+ * 当有等待者（dispatch_group_wait 中的线程）需要在下一次值达到 0 时被唤醒时，设置该位。
+ * 等待者在等待之前对世代进行快照，并在返回之前等待世代改变。
  */
 #define DISPATCH_GROUP_GEN_MASK         0xffffffff00000000ULL
 #define DISPATCH_GROUP_VALUE_MASK       0x00000000fffffffcULL
@@ -136,6 +144,73 @@ struct dispatch_group_s {
 	struct dispatch_continuation_s *volatile dg_notify_head;
 	struct dispatch_continuation_s *volatile dg_notify_tail;
 };
+
+
+/* dispatch_group_s 结构体全部展开后
+struct dispatch_group_extra_vtable_s {
+    unsigned long const do_type;
+    void (*const do_dispose)(struct dispatch_group_s *, bool *allow_free);
+    size_t (*const do_debug)(struct dispatch_group_s *, char *, size_t);
+    void (*const do_invoke)(struct dispatch_group_s *, dispatch_invoke_context_t, dispatch_invoke_flags_t);
+};
+
+struct dispatch_group_vtable_s {
+    // _OS_OBJECT_CLASS_HEADER();
+    void (*_os_obj_xref_dispose)(_os_object_t);
+    void (*_os_obj_dispose)(_os_object_t);
+    
+    struct dispatch_group_extra_vtable_s _os_obj_vtable;
+};
+
+// OS_OBJECT_CLASS_SYMBOL(dispatch_group)
+
+extern const struct dispatch_group_vtable_s _OS_dispatch_group_vtable;
+extern const struct dispatch_group_vtable_s OS_dispatch_group_class __asm__("__" OS_STRINGIFY(dispatch_group) "_vtable");
+
+struct dispatch_group_s {
+    struct dispatch_object_s _as_do[0];
+    struct _os_object_s _as_os_obj[0];
+    
+    // must be pointer-sized 
+    const struct dispatch_group_vtable_s *do_vtable; 
+    
+    int volatile do_ref_cnt;
+    int volatile do_xref_cnt;
+    
+    struct dispatch_group_s *volatile do_next;
+    struct dispatch_queue_s *do_targetq;
+    void *do_ctxt;
+    void *do_finalizer;
+    
+    // 可看到上半部分和其它 GCD 对象都是相同的，毕竟大家都是继承自 dispatch_object_s，重点是下面的新内容
+    
+    union { 
+        uint64_t volatile dg_state;  // leave 时加 DISPATCH_GROUP_VALUE_INTERVAL
+        struct { 
+            uint32_t dg_bits; // enter 时减 DISPATCH_GROUP_VALUE_INTERVAL
+            
+            // 主要用于 dispatch_group_wait 函数被调用后，
+            // 当 dispath_group 处于 wait 状态时，结束等待的条件有两条：
+            // 1): 当 dispatch_group 关联的 block 都执行完毕后，wait 状态结束
+            // 2): 当到达了指定的等待时间后，即使关联的 block 没有执行完成，也结束 wait 状态 
+            
+            // 而当 dg_gen 不为 0 时，说明 dg_state 发生了进位，可表示 dispatch_group 关联的 block 都执行完毕了，
+            // 如果 dispatch_group 此时处于 wait 状态的话就可以结束了，此时正对应上面结束 wait 状态的条件 1 中。
+            uint32_t dg_gen;
+        };
+    } __attribute__((aligned(8)));
+    
+    // 下面两个成员变量比较特殊，它们分别是一个链表的头节点指针和尾节点指针
+    // 调用 dispatch_group_notify 函数可添加当 dispatch_group 关联的 block 异步执行完成后的回调通知，
+    // 多次调用 dispatch_group_notify 函数可添加多个回调事件（我们日常开发一般就用了一个回调事件，可能会忽略这个细节），
+    // 而这些多个回调事件则会构成一个 dispatch_continuation_s 作为节点的链表，当 dispatch_group 中关联的 block 全部执行完成后，
+    // 此链表中的 dispatch_continuation_s 都会得到异步执行。
+    //（注意是异步，具体在哪个队列则根据 dispatch_group_notify 函数的入参决定，以及执行的优先级则根据队列的优先级决定）。
+    
+    struct dispatch_continuation_s *volatile dg_notify_head; // dispatch_continuation_s 链表的头部节点
+    struct dispatch_continuation_s *volatile dg_notify_tail; // dispatch_continuation_s 链表的尾部节点
+};
+*/
 
 DISPATCH_ALWAYS_INLINE
 static inline uint32_t

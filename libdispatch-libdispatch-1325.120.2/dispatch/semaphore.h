@@ -56,9 +56,11 @@ __BEGIN_DECLS
  * @param value
  * The starting value for the semaphore. Passing a value less than zero will
  * cause NULL to be returned.
+ * 信号量的起始值，传递小于零的值将导致返回 NULL
  *
  * @result
  * The newly created semaphore, or NULL on failure.
+ * 新创建的信号量，失败时为 NULL。
  */
 API_AVAILABLE(macos(10.6), ios(4.0))
 DISPATCH_EXPORT DISPATCH_MALLOC DISPATCH_RETURNS_RETAINED DISPATCH_WARN_RESULT

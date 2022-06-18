@@ -235,7 +235,10 @@ DISPATCH_ALWAYS_INLINE
 static inline void
 _dispatch_sema4_create(_dispatch_sema4_t *sema, int policy)
 {
+	// #define _dispatch_sema4_is_created(sema)   (*(sema) != MACH_PORT_NULL)
+	// 如果 sema 为 NULL，则调用 _dispatch_sema4_create_slow 为 sema 赋值
 	if (!_dispatch_sema4_is_created(sema)) {
+		// 从缓存读取或者新建
 		_dispatch_sema4_create_slow(sema, policy);
 	}
 }
@@ -244,6 +247,7 @@ DISPATCH_ALWAYS_INLINE
 static inline void
 _dispatch_sema4_dispose(_dispatch_sema4_t *sema, int policy)
 {
+	// 如果 sema 存在则调用 _dispatch_sema4_dispose_slow 函数
 	if (_dispatch_sema4_is_created(sema)) {
 		_dispatch_sema4_dispose_slow(sema, policy);
 	}

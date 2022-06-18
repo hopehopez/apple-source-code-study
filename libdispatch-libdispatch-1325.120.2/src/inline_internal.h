@@ -2183,6 +2183,7 @@ _dispatch_get_root_queue(dispatch_qos_t qos, uintptr_t flags)
 }
 //DISPATCH_ROOT_QUEUE_IDX_DEFAULT_QOS = 9
 //主队列时overcommit = true !!(overcommit)=1
+//overcommit=false时，!!(overcommit)=0 
 #define _dispatch_get_default_queue(overcommit) \
 		_dispatch_root_queues[DISPATCH_ROOT_QUEUE_IDX_DEFAULT_QOS + \
 				!!(overcommit)]._as_dq
@@ -2744,21 +2745,35 @@ _dispatch_continuation_free(dispatch_continuation_t dc)
 	}
 }
 
+/*
+ _dispatch_continuation_with_group_invoke 是 dispatch_group_async 提交的异步任务执行时调用的函数。
+_dispatch_continuation_with_group_invoke 函数内的 dc->dc_data 正是
+上面 _dispatch_continuation_group_async 函数中赋值的 dispatch_group，
+然后 type == DISPATCH_GROUP_TYPE 为真，_dispatch_client_callout 函数
+执行我们的 dispatch_group_async 函数传递的 block，
+然后是下面的 dispatch_group_leave((dispatch_group_t)dou) 出组操作，
+正对应了上面 _dispatch_continuation_group_async 函数中的 dispatch_group_enter(dg) 进组操作。
+*/
 DISPATCH_ALWAYS_INLINE
 static inline void
 _dispatch_continuation_with_group_invoke(dispatch_continuation_t dc)
 {
+	// dou 我们上面的赋值的 dg
 	struct dispatch_object_s *dou = dc->dc_data;
+	// dou 的类型是 DISPATCH_GROUP_TYPE
 	unsigned long type = dx_type(dou);
 	if (type == DISPATCH_GROUP_TYPE) {
+		// 执行 GCD 任务
 		_dispatch_client_callout(dc->dc_ctxt, dc->dc_func);
 		_dispatch_trace_item_complete(dc);
+		// 执行 leave 操作，和上面的 enter 操作对应
 		dispatch_group_leave((dispatch_group_t)dou);
 	} else {
 		DISPATCH_INTERNAL_CRASH(dx_type(dou), "Unexpected object type");
 	}
 }
 
+//dispatch_continuation_t 被调用时执行的函数
 DISPATCH_ALWAYS_INLINE
 static inline void
 _dispatch_continuation_invoke_inline(dispatch_object_t dou,
@@ -2782,6 +2797,10 @@ _dispatch_continuation_invoke_inline(dispatch_object_t dou,
 		} else {
 			dc1 = NULL;
 		}
+
+
+		// 当 dc_flags 包含 DC_FLAG_GROUP_ASYNC 时，执行的是 _dispatch_continuation_with_group_invoke 函数，
+        // else 里面的 _dispatch_client_callout 是我们日常 dispatch_async 函数提交的任务执行时调用的函数。
 		if (unlikely(dc_flags & DC_FLAG_GROUP_ASYNC)) {
 			_dispatch_continuation_with_group_invoke(dc);
 		} else {
@@ -2924,16 +2943,22 @@ _dispatch_continuation_init(dispatch_continuation_t dc,
 	/* async时,
 	    	flags 是 0,
 	     dc_flags 是 DC_FLAG_CONSUME（0x004ul）
+
+		dispatch_group_async时，
+		flags 是 0,
+	    dc_flags 是 DC_FLAG_CONSUME | DC_FLAG_GROUP_ASYNC （0xC）
+
 	 */
 	
 	// 把入参 block 复制到堆区（内部是调用了 Block_copy 函数）
 	void *ctxt = _dispatch_Block_copy(work);
 
-	
 	/*
-	 // #define DC_FLAG_BLOCK   0x010ul
+	 //#define DC_FLAG_BLOCK   0x010ul
 	 //#define DC_FLAG_ALLOCATED	 0x100ul
 	 async时, dc_flags |= 0x010 | 0x100 = 0x114
+
+	 dispatch_group_async时，dc_flags |= 0x010 | 0x100 = 0x11C
 	 */
 	dc_flags |= DC_FLAG_BLOCK | DC_FLAG_ALLOCATED;
 	
@@ -2963,6 +2988,8 @@ _dispatch_continuation_init(dispatch_continuation_t dc,
 	 func = _dispatch_call_block_and_release,
 	 flags = 0
 	 dc_flags = 0x114
+
+	 dc_flags = 0x11c
 	*/
 	return _dispatch_continuation_init_f(dc, dqu, ctxt, func, flags, dc_flags);
 }
@@ -2985,6 +3012,8 @@ _dispatch_continuation_async(dispatch_queue_class_t dqu,
 	//(&(dqu._dq)->do_vtable->_os_obj_vtable)->dq_push(x, y, z)
 	// 调用队列的 dq_push 函数
 	// .dq_push        = _dispatch_root_queue_push,
+
+	 // 调用队列的 dq_push 函数，并示把任务放入到指定的队列中
 	return dx_push(dqu._dq, dc, qos);
 }
 
