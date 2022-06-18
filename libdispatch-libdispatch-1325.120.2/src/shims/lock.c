@@ -647,16 +647,22 @@ _dispatch_unfair_lock_unlock_slow(dispatch_unfair_lock_t dul, dispatch_lock cur)
 void
 _dispatch_once_wait(dispatch_once_gate_t dgo)
 {
+	// 获取当前线程的 ID
 	dispatch_lock self = _dispatch_lock_value_for_self();
 	uintptr_t old_v, new_v;
 #if HAVE_UL_UNFAIR_LOCK || HAVE_FUTEX
+	// 取出 dgl_lock
 	dispatch_lock *lock = &dgo->dgo_gate.dgl_lock;
 #endif
 	uint32_t timeout = 1;
 
+	// 进入一个无限循环
 	for (;;) {
+		//os_atomic_rmw_loop 用于从操作系统底层获取状态
 		os_atomic_rmw_loop(&dgo->dgo_once, old_v, new_v, relaxed, {
+			// 当 old_v 被 _dispatch_once_mark_done 中设置为 DLOCK_ONCE_DONE
 			if (likely(old_v == DLOCK_ONCE_DONE)) {
+            	// 常规分支，dispatch_once_f 提交的函数已经执行完成，则直接结束函数执行
 				os_atomic_rmw_loop_give_up(return);
 			}
 #if DISPATCH_ONCE_USE_QUIESCENT_COUNTER
@@ -667,7 +673,9 @@ _dispatch_once_wait(dispatch_once_gate_t dgo)
 				});
 			}
 #endif
+			// #define DLOCK_WAITERS_BIT   ((dispatch_lock)0x00000001)
 			new_v = old_v | (uintptr_t)DLOCK_WAITERS_BIT;
+			// 跳出循环
 			if (new_v == old_v) os_atomic_rmw_loop_give_up(break);
 		});
 		if (unlikely(_dispatch_lock_is_locked_by((dispatch_lock)old_v, self))) {
@@ -694,8 +702,10 @@ _dispatch_gate_broadcast_slow(dispatch_gate_t dgl, dispatch_lock cur)
 	}
 
 #if HAVE_UL_UNFAIR_LOCK
+ // 唤醒线程
 	_dispatch_unfair_lock_wake(&dgl->dgl_lock, ULF_WAKE_ALL);
 #elif HAVE_FUTEX
+ // 唤醒线程
 	_dispatch_futex_wake(&dgl->dgl_lock, INT_MAX, FUTEX_PRIVATE_FLAG);
 #else
 	(void)dgl;

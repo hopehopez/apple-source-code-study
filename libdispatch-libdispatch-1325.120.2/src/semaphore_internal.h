@@ -29,6 +29,61 @@
 
 struct dispatch_queue_s;
 
+/*
+struct dispatch_semaphore_s;
+
+// OS_OBJECT_CLASS_DECL(dispatch_semaphore, DISPATCH_OBJECT_VTABLE_HEADER(dispatch_semaphore))
+
+struct dispatch_semaphore_extra_vtable_s {
+    unsigned long const do_type;
+    void (*const do_dispose)(struct dispatch_semaphore_s *, bool *allow_free);
+    size_t (*const do_debug)(struct dispatch_semaphore_s *, char *, size_t);
+    void (*const do_invoke)(struct dispatch_semaphore_s *, dispatch_invoke_context_t, dispatch_invoke_flags_t);
+};
+
+struct dispatch_semaphore_vtable_s {
+    // _OS_OBJECT_CLASS_HEADER();
+    void (*_os_obj_xref_dispose)(_os_object_t);
+    void (*_os_obj_dispose)(_os_object_t);
+    
+    struct dispatch_semaphore_extra_vtable_s _os_obj_vtable;
+};
+
+// OS_OBJECT_CLASS_SYMBOL(dispatch_semaphore)
+
+extern const struct dispatch_semaphore_vtable_s _OS_dispatch_semaphore_vtable;
+extern const struct dispatch_semaphore_vtable_s OS_dispatch_semaphore_class __asm__("__" OS_STRINGIFY(dispatch_semaphore) "_vtable");
+
+struct dispatch_semaphore_s {
+    struct dispatch_object_s _as_do[0];
+    struct _os_object_s _as_os_obj[0];
+    
+	// must be pointer-sized
+    const struct dispatch_semaphore_vtable_s *do_vtable; 
+    
+    int volatile do_ref_cnt;
+    int volatile do_xref_cnt;
+    
+    struct dispatch_semaphore_s *volatile do_next;
+    struct dispatch_queue_s *do_targetq;
+    void *do_ctxt;
+    void *do_finalizer;
+    
+    // 可看到上半部分和其它 GCD 对象都是相同的，毕竟大家都是继承自 dispatch_object_s，重点是下面两个新的成员变量
+    // dsema_value 和 dsema_orig 是信号量执行任务的关键，执行一次 dispatch_semaphore_wait 操作，dsema_value 的值就做一次减操作
+    
+    long volatile dsema_value;
+    long dsema_orig;
+    _dispatch_sema4_t dsema_sema;
+};
+
+*/
+
+/*
+dispatch_semaphore 是 GCD 中最常见的操作，通常用于保证资源的多线程安全性和控制任务的并发数量。
+其本质实际上是基于 mach 内核的信号量接口来实现的。
+*/
+
 DISPATCH_CLASS_DECL(semaphore, OBJECT);
 struct dispatch_semaphore_s {
 	DISPATCH_OBJECT_HEADER(semaphore);
@@ -36,6 +91,7 @@ struct dispatch_semaphore_s {
 	intptr_t dsema_orig;
 	_dispatch_sema4_t dsema_sema;
 };
+
 
 /*
  * Dispatch Group State:

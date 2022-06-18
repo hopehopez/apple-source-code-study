@@ -680,6 +680,19 @@ DISPATCH_ALWAYS_INLINE
 static inline bool
 _dispatch_once_gate_tryenter(dispatch_once_gate_t l)
 {
+	/*
+	#define os_atomic_cmpxchg(p, e, v, m) \
+        ({ _os_atomic_basetypeof(p) _r = (e); \
+        atomic_compare_exchange_strong_explicit(_os_atomic_c11_atomic(p), \
+        &_r, v, memory_order_##m, memory_order_relaxed); })
+		p 变量相当于 atomic_t 类型的 ptr 指针用于获取当前内存访问制约规则 m 的值，
+		用于对比旧值 e，若相等就赋新值 v，若不相等则把 p 内存空间里的值赋值给 e。
+
+		_dispatch_lock_value_for_self() 取出当前线程的 ID
+
+		所以这里大概意思是 取出l的值，如果它等于DLOCK_ONCE_UNLOCKED（0）
+		就把当前线程的id赋值给 l
+	*/
 	return os_atomic_cmpxchg(&l->dgo_once, DLOCK_ONCE_UNLOCKED,
 			(uintptr_t)_dispatch_lock_value_for_self(), relaxed);
 }
@@ -688,14 +701,21 @@ DISPATCH_ALWAYS_INLINE
 static inline void
 _dispatch_once_gate_broadcast(dispatch_once_gate_t l)
 {
+	//获取当前线程id
 	dispatch_lock value_self = _dispatch_lock_value_for_self();
 	uintptr_t v;
 #if DISPATCH_ONCE_USE_QUIESCENT_COUNTER
 	v = _dispatch_once_mark_quiescing(l);
 #else
+// 原子性的设置 l（dgo_once 成员变量）的值为 DLOCK_ONCE_DONE，并返回 l（dgo_once 成员变量）的原始值
 	v = _dispatch_once_mark_done(l);
 #endif
+// 如果是单线程执行 dispatch_once 的话则 v 等于 value_self，直接 return。
+// 如果是多线程执行 dispatch_once 的话则 v 可能不等于 value_self，
+// 需要执行接下来的 _dispatch_gate_broadcast_slow 唤醒阻塞的线程。
 	if (likely((dispatch_lock)v == value_self)) return;
+
+//去唤醒被阻塞的线程
 	_dispatch_gate_broadcast_slow(&l->dgo_gate, (dispatch_lock)v);
 }
 
