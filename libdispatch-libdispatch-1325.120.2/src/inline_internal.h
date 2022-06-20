@@ -1944,9 +1944,12 @@ _dispatch_root_queue_push_inline(dispatch_queue_global_t dq,
 		os_atomic_xchg(_os_mpsc_tail Q, _tl, release); \
 	})
 	 */
+	
     //#define os_mpsc_push_was_empty(prev) ((prev) == NULL)
 	
+	//os_mpsc_push_list 宏的使用把我们最开始封装的 dispatch_continuation_s 追加到队列的 dq_items_tail 中
 	if (unlikely(os_mpsc_push_list(os_mpsc(dq, dq_items), hd, tl, do_next))) {
+		// 队列和队列中的任务都准备好了，现在需要执行任务了，调用 _dispatch_root_queue_poke 函数
 		return _dispatch_root_queue_poke(dq, n, 0);
 	}
 }

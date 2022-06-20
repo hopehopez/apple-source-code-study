@@ -788,11 +788,23 @@ _dispatch_barrier_async_detached_f(dispatch_queue_class_t dq, void *ctxt,
 void
 dispatch_barrier_async(dispatch_queue_t dq, dispatch_block_t work)
 {
+	// 取得一个 dispatch_continuation_s 结构体实例，用于封装 work
 	dispatch_continuation_t dc = _dispatch_continuation_alloc();
+
+	// continuation resources are freed on run this is set on async or for non event_handler source handlers
+    // #define DC_FLAG_CONSUME  0x004ul
+    // continuation acts as a barrier
+    // #define DC_FLAG_BARRIER  0x002ul
+    // DC_FLAG_CONSUME | DC_FLAG_BARRIER = 0x006ul
+    
+    // dc_flags 中添加 DC_FLAG_BARRIER 标记，标记此 work 是一个屏障 block，然后剩下的内容都和 dispatch_async 完全相同
 	uintptr_t dc_flags = DC_FLAG_CONSUME | DC_FLAG_BARRIER;
 	dispatch_qos_t qos;
 
+	// 封装 work block 的内容以及任务执行时所处的队列等内容到 dc 中
 	qos = _dispatch_continuation_init(dc, dq, work, 0, dc_flags);
+
+	// 把封装好的 dispatch_continuation_s 进行异步调用
 	_dispatch_continuation_async(dq, dc, qos, dc_flags);
 }
 #endif
@@ -6600,6 +6612,7 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 	_dispatch_root_queues_init();
 	// DEGBUG 模式时的打印 __func__ 函数执行
 	_dispatch_debug_root_queue(dq, __func__);
+	//hook
 	_dispatch_trace_runtime_event(worker_request, dq, (uint64_t)n);
 
 #if !DISPATCH_USE_INTERNAL_WORKQUEUE
@@ -6627,6 +6640,7 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 #if DISPATCH_USE_PTHREAD_POOL
 	dispatch_pthread_root_queue_context_t pqc = dq->do_ctxt;
 	if (likely(pqc->dpq_thread_mediator.do_vtable)) {
+		// 循环调用 dispatch_semaphore_signal 发送信号量，增加 dsema_value 的值
 		while (dispatch_semaphore_signal(&pqc->dpq_thread_mediator)) {
 			_dispatch_root_queue_debug("signaled sleeping worker for "
 					"global queue: %p", dq);
@@ -6636,10 +6650,13 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 		}
 	}
 
+	//// 根据队列的优先级判断是否可以 overcommit
 	bool overcommit = dq->dq_priority & DISPATCH_PRIORITY_FLAG_OVERCOMMIT;
 	if (overcommit) {
+		 // 原子增加
 		os_atomic_add2o(dq, dgq_pending, remaining, relaxed);
 	} else {
+		// 原子比较
 		if (!os_atomic_cmpxchg2o(dq, dgq_pending, 0, remaining, relaxed)) {
 			_dispatch_root_queue_debug("worker thread request still pending for "
 					"global queue: %p", dq);
@@ -6654,6 +6671,7 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 	do {
 		// 计算可以请求的数量
 		can_request = t_count < floor ? 0 : t_count - floor;
+		// 如果剩余大于可以请求的数量，则原子减少 dgq_pending
 		if (remaining > can_request) {
 			_dispatch_root_queue_debug("pthread pool reducing request from %d to %d",
 					remaining, can_request);
@@ -6671,6 +6689,7 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 			t_count - remaining, &t_count, acquire));
 
 #if !defined(_WIN32)
+	// 线程属性
 	pthread_attr_t *attr = &pqc->dpq_thread_attr;
 	pthread_t tid, *pthr = &tid;
 #if DISPATCH_USE_MGR_THREAD && DISPATCH_USE_PTHREAD_ROOT_QUEUES
@@ -6679,8 +6698,9 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 	}
 #endif
 	do {
-		
+		// 增加 dq 的引用计数
 		_dispatch_retain(dq); // released in _dispatch_worker_thread
+
 		// 开辟线程 pthread_create
 		while ((r = pthread_create(pthr, attr, _dispatch_worker_thread, dq))) {
 			if (r != EAGAIN) {
@@ -6697,6 +6717,7 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 	}
 #endif
 	do {
+		// 增加 dq 的引用计数
 		_dispatch_retain(dq); // released in _dispatch_worker_thread
 		uintptr_t hThread = 0;
 		while (!(hThread = _beginthreadex(NULL, /* stack_size */ 0, _dispatch_worker_thread_thunk, dq, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL))) {
@@ -6718,6 +6739,9 @@ _dispatch_root_queue_poke_slow(dispatch_queue_global_t dq, int n, int floor)
 #endif // DISPATCH_USE_PTHREAD_POOL
 }
 
+//_dispatch_root_queue_poke 函数前面都是一些判断容错，
+//如判断 dq_items_tail 是否为空即判断入参队列中是否添加了任务等等，
+//然后函数最后调用了 _dispatch_root_queue_poke_slow 函数。
 DISPATCH_NOINLINE
 void
 _dispatch_root_queue_poke(dispatch_queue_global_t dq, int n, int floor)

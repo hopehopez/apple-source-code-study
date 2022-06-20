@@ -452,20 +452,24 @@ dispatch_group_leave(dispatch_group_t dg)
 	// #define DISPATCH_GROUP_VALUE_MASK   0x00000000fffffffcULL ➡️ 0b0000...11111100ULL
     // #define DISPATCH_GROUP_VALUE_1   DISPATCH_GROUP_VALUE_MASK
     
-    // dg_state 的旧值和 DISPATCH_GROUP_VALUE_MASK 进行与操作掩码取值，
+    // dg_state 的旧值和 DISPATCH_GROUP_VALUE_MASK 进行与操作掩码取值，消除dg_state低2位的影响
 	// 如果此时仅关联了一个 block 的话那么 dg_state 的旧值就是（十六进制：0xFFFFFFFC），
     //（那么上面的 os_atomic_add_orig2o 执行后，dg_state 的值是 0x0000000100000000ULL，
     // 因为它是 uint64_t 类型它会从最大的 uint32_t 继续进位，而不同于 dg_bits 的 uint32_t 类型溢出后为 0）
-    // 如果 dg_state 旧值 old_state 等于 0xFFFFFFFC 则和 DISPATCH_GROUP_VALUE_MASK 与操作结果还是 0xFFFFFFFC
+	// 注意 此时强转为uint32
 	uint32_t old_value = (uint32_t)(old_state & DISPATCH_GROUP_VALUE_MASK);
 
 	if (unlikely(old_value == DISPATCH_GROUP_VALUE_1)) {
 		//如果old_value == 0xFFFFFFFC，说明此时的如果dg_state = 0x0000000100000000ULL已经产生进位了
+		//此时dg_state的高32位为0x00000001, dg_gen也是1 由于联合体的存在，其实它俩是同一个
 
 		// old_state 是 0x00000000fffffffcULL，DISPATCH_GROUP_VALUE_INTERVAL 的值是 0x0000000000000004ULL
-        // 所以这里 old_state 是 uint64_t 类型，加 DISPATCH_GROUP_VALUE_INTERVAL 后不会发生溢出会产生正常的进位，old_state = 0x0000000100000000ULL
+        // 由于这里 old_state 是 uint64_t 类型，加 DISPATCH_GROUP_VALUE_INTERVAL 后不会发生溢出会产生正常的进位，
+		// old_state = 0x00000001000000xxULL
 		old_state += DISPATCH_GROUP_VALUE_INTERVAL;
 		do {
+		
+			// new_state = 0x00000001000000xx
 			new_state = old_state;
 			if ((old_state & DISPATCH_GROUP_VALUE_MASK) == 0) {
 				// 如果目前是仅关联了一个 block 而且是正常的 enter 和 leave 配对执行，则会执行这里。
@@ -475,7 +479,7 @@ dispatch_group_leave(dispatch_group_t dg)
 
 				// 清理 new_state 中对应 DISPATCH_GROUP_HAS_WAITERS 的非零位的值，
                 // 即把 new_state 二进制表示的倒数第一位置 0
-				new_state &= ~DISPATCH_GROUP_HAS_WAITERS;
+				new_state &= ~DISPATCH_GROUP_HAS_WAITERS; 
 
 				// 清理 new_state 中对应 DISPATCH_GROUP_HAS_NOTIFS 的非零位的值，
                 // 即把 new_state 二进制表示的倒数第二位置 0
@@ -552,7 +556,8 @@ dispatch_group_enter(dispatch_group_t dg)
     // 这里可以理解为上面 4294967292 每次减 4，一直往下减，直到溢出...
     // 表示 dispatch_group_enter 函数过度调用，则 crash。
     // DISPATCH_GROUP_VALUE_MAX = 0 + DISPATCH_GROUP_VALUE_INTERVAL; 
-	// 当old_value==DISPATCH_GROUP_VALUE_MAX==0x4时，再减4 就变成0了，已经影响到dg_bits的低2位，此时crash
+	// 当old_value==DISPATCH_GROUP_VALUE_MAX==0x4时，再减4 就变成0了, 此时的0 跟 初始值是0已经不一样了，
+	// 已经分不清当前与group关联的block数目是0 还是极大值了， 所以此时crash
 	if (unlikely(old_value == DISPATCH_GROUP_VALUE_MAX)) {
 		DISPATCH_CLIENT_CRASH(old_bits,
 				"Too many nested calls to dispatch_group_enter()");
