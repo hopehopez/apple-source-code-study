@@ -1,0 +1,40 @@
+//
+//  ZPerson.h
+//  ZTest
+//
+//  Created by zsq on 2021/1/8.
+//
+
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+@interface ZPerson : NSObject{
+    NSString *hobby;
+}
+
+@property (nonatomic, copy) NSString *nickName;
+
+
+- (void)sayHello;
++ (void)sayHappy;
+
+@end
+
+@interface ZStudent : ZPerson{
+    NSString *studentNo;
+    int age;
+}
+
+@end
+
+@interface ZTeacher : ZPerson{
+    int teacher_id;
+    NSMutableArray *students;
+}
+
+@end
+
+
+
+NS_ASSUME_NONNULL_END
