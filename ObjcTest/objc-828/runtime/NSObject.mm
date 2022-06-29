@@ -678,7 +678,7 @@ retry:
 
 /***********************************************************************
    Autorelease pool implementation
-
+    
    A thread's autorelease pool is a stack of pointers. 
    Each pointer is either an object to release, or POOL_BOUNDARY which is 
      an autorelease pool boundary.
@@ -687,7 +687,12 @@ retry:
    The stack is divided into a doubly-linked list of pages. Pages are added 
      and deleted as necessary. 
    Thread-local storage points to the hot page, where newly autoreleased 
-     objects are stored. 
+     objects are stored.
+  线程的自动释放池是一个指针堆栈。
+  每个pool token要么是要释放的对象，要么是作为自动释放池边界的 -- POOL_BOUNDARY。
+  token是指向该自动释放池的 POOL_BOUNDARY 的指针。 当pool被弹出时，每个比哨兵更热的对象都会被释放。
+  堆栈被分成一个双向链接的页面列表。 根据需要添加和删除页面。
+  线程本地存储指向热页，其中存储了新的自动释放对象。
 **********************************************************************/
 
 BREAKPOINT_FUNCTION(void objc_autoreleaseNoPool(id obj));
@@ -698,6 +703,7 @@ class AutoreleasePoolPage : private AutoreleasePoolPageData
 	friend struct thread_data_t;
 
 public:
+    // 每个 Page 对象占用 4096 个字节内存
 	static size_t const SIZE =
 #if PROTECT_AUTORELEASEPOOL
 		PAGE_MAX_SIZE;  // must be multiple of vm page size
@@ -707,8 +713,8 @@ public:
     
 private:
 	static pthread_key_t const key = AUTORELEASE_POOL_KEY;
-	static uint8_t const SCRIBBLE = 0xA3;  // 0xA3A3A3A3 after releasing
-	static size_t const COUNT = SIZE / sizeof(id);
+	static uint8_t const SCRIBBLE = 0xA3;  // 0xA3A3A3A3 after releasing 用来标记已释放的对象
+	static size_t const COUNT = SIZE / sizeof(id); // Page 的个数
     static size_t const MAX_FAULTS = 2;
 
     // EMPTY_POOL_PLACEHOLDER is stored in TLS when exactly one pool is 
@@ -758,6 +764,7 @@ private:
 #endif
     }
 
+    ///AutoreleasePoolPage()方法的参数为parentPage，新创建的Page的depth加一， next指针的初始位置指向begin， 将新创建的Page的parent指针指向parentPage。 将parentPage的child指针指向自己，这就形成了双向链表的结构
 	AutoreleasePoolPage(AutoreleasePoolPage *newParent) :
 		AutoreleasePoolPageData(begin(),
 								objc_thread_self(),
@@ -840,6 +847,7 @@ private:
 
 
     id * begin() {
+        //sizeof(*this) 56
         return (id *) ((uint8_t *)this+sizeof(*this));
     }
 
@@ -915,6 +923,7 @@ private:
         releaseUntil(begin());
     }
 
+    //releaseUntil()方法其实就是通过一个while循环，从最后一个入栈的autorelease对象开始，依次给它们发送一条release消息，直到遇到这个POOL_BOUNDARY
     void releaseUntil(id *stop) 
     {
         // Not recursive: we don't want to blow out the stack 
@@ -1042,6 +1051,7 @@ private:
         return EMPTY_POOL_PLACEHOLDER;
     }
 
+    ///tls中存储 返回最后一个autorealease对象存入的page
     static inline AutoreleasePoolPage *hotPage() 
     {
         AutoreleasePoolPage *result = (AutoreleasePoolPage *)
@@ -1057,6 +1067,7 @@ private:
         tls_set_direct(key, (void *)page);
     }
 
+    ///返回第一个page
     static inline AutoreleasePoolPage *coldPage() 
     {
         AutoreleasePoolPage *result = hotPage();
@@ -1072,13 +1083,13 @@ private:
 
     static inline id *autoreleaseFast(id obj)
     {
-        AutoreleasePoolPage *page = hotPage();
-        if (page && !page->full()) {
-            return page->add(obj);
-        } else if (page) {
-            return autoreleaseFullPage(obj, page);
-        } else {
-            return autoreleaseNoPage(obj);
+        AutoreleasePoolPage *page = hotPage();// 双向链表中的最后一个 Page
+        if (page && !page->full()) {  // 如果当前 Page 存在且未满
+            return page->add(obj); // 将 autorelease 对象入栈，即添加到当前 Page 中；
+        } else if (page) {     // 如果当前 Page 存在但已满
+            return autoreleaseFullPage(obj, page); // 创建一个新的 Page，并将 autorelease 对象添加进去
+        } else {    // 如果当前 Page 不存在，即还没创建过 Page
+            return autoreleaseNoPage(obj); // 创建第一个 Page，并将 autorelease 对象添加进去
         }
     }
 
@@ -1174,10 +1185,11 @@ public:
     static inline void *push() 
     {
         id *dest;
-        if (slowpath(DebugPoolAllocation)) {
+        if (slowpath(DebugPoolAllocation)) {// 出错时进入调试状态
             // Each autorelease pool starts on a new pool page.
             dest = autoreleaseNewPage(POOL_BOUNDARY);
         } else {
+            // 传入 POOL_BOUNDARY 哨兵对象 POOL_BOUNDARY = nil
             dest = autoreleaseFast(POOL_BOUNDARY);
         }
         ASSERT(dest == EMPTY_POOL_PLACEHOLDER || *dest == POOL_BOUNDARY);
@@ -1215,7 +1227,8 @@ public:
     popPage(void *token, AutoreleasePoolPage *page, id *stop)
     {
         if (allowDebug && PrintPoolHiwat) printHiwat();
-
+        
+        //③ 通过page->releaseUntil(stop)将自动释放池中的autorelease对象全部释放， 传参stop即为POOL_BOUNDARY的地址；
         page->releaseUntil(stop);
 
         // memory: delete empty children
@@ -1230,6 +1243,7 @@ public:
             page->kill();
             setHotPage(nil);
         } else if (page->child) {
+            // ④ 判断当前Page是否有子Page，有的话就销毁
             // hysteresis: keep one empty child if page is more than half full
             if (page->lessThanHalfFull()) {
                 page->child->kill();
@@ -1247,11 +1261,14 @@ public:
         popPage<true>(token, page, stop);
     }
 
+    //当销毁自动释放池时，会调用pop()方法将自动释放池中的autorelease对象全部释放（实际上是从自动释放池的中的最后一个入栈的autorelease对象开始，依次给它们发送一条release消息，直到遇到这个POOL_BOUNDARY）
     static inline void
-    pop(void *token)
+    pop(void *token) //token即为POOL_BOUNDARY对应在Page中的地址
     {
         AutoreleasePoolPage *page;
         id *stop;
+        
+        //① 判断token是不是EMPTY_POOL_PLACEHOLDER，是的话就清空这个自动释放池
         if (token == (void*)EMPTY_POOL_PLACEHOLDER) {
             // Popping the top-level placeholder pool.
             page = hotPage();
@@ -1264,10 +1281,12 @@ public:
             page = coldPage();
             token = page->begin();
         } else {
+            //② 如果不是的话，就通过pageForPointer(token)拿到token所在的Page（自动释放池的首个Page）
             page = pageForPointer(token);
         }
 
         stop = (id *)token;
+        
         if (*stop != POOL_BOUNDARY) {
             if (stop == page->begin()  &&  !page->parent) {
                 // Start of coldest page may correctly not be POOL_BOUNDARY:
@@ -1284,6 +1303,7 @@ public:
             return popPageDebug(token, page, stop);
         }
 
+       
         return popPage<false>(token, page, stop);
     }
 

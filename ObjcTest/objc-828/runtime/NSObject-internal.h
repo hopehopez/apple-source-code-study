@@ -86,7 +86,7 @@ struct magic_t {
 	static const uint32_t M0 = 0xA1A1A1A1;
 #   define M1 "AUTORELEASE!"
 	static const size_t M1_len = 12;
-	uint32_t m[4];
+	uint32_t m[4]; // 4 * 4 = 16位
 
 	magic_t() {
 		ASSERT(M1_len == strlen(M1));
@@ -133,13 +133,13 @@ struct AutoreleasePoolPageData
     static_assert((AutoreleasePoolEntry){ .ptr = MACH_VM_MAX_ADDRESS }.ptr == MACH_VM_MAX_ADDRESS, "MACH_VM_MAX_ADDRESS doesn't fit into AutoreleasePoolEntry::ptr!");
 #endif
 
-	magic_t const magic;
-	__unsafe_unretained id *next;
-	pthread_t const thread;
-	AutoreleasePoolPage * const parent;
-	AutoreleasePoolPage *child;
-	uint32_t const depth;
-	uint32_t hiwat;
+	magic_t const magic; // 用来校验 Page 的结构是否完整  16
+	__unsafe_unretained id *next; // 指向下一个可存放 autorelease 对象地址的位置，初始化指向 begin() 8
+	pthread_t const thread;  // 指向当前线程  8
+	AutoreleasePoolPage * const parent; // 指向父结点，首结点的 parent 为 nil  8
+	AutoreleasePoolPage *child; // 指向子结点，尾结点的 child  为 nil  8
+	uint32_t const depth;  // Page 的深度，从 0 开始递增  4
+	uint32_t hiwat; // 代表high water mark 最大入栈数量标记 4
 
 	AutoreleasePoolPageData(__unsafe_unretained id* _next, pthread_t _thread, AutoreleasePoolPage* _parent, uint32_t _depth, uint32_t _hiwat)
 		: magic(), next(_next), thread(_thread),
