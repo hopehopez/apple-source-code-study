@@ -71,7 +71,9 @@ CF_EXPORT const CFStringRef kCFRunLoopCommonModes;
 
 CF_EXPORT CFTypeID CFRunLoopGetTypeID(void);
 
+///获取当前线程的runloop
 CF_EXPORT CFRunLoopRef CFRunLoopGetCurrent(void);
+///获取主线程的runloop
 CF_EXPORT CFRunLoopRef CFRunLoopGetMain(void);
 
 CF_EXPORT CFStringRef CFRunLoopCopyCurrentMode(CFRunLoopRef rl);
